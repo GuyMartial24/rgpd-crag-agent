@@ -76,11 +76,24 @@ RGPD qui y répondent, en employant le vocabulaire du règlement \
 "data subject", « autorité de contrôle » / "supervisory authority"...).
 Réponds uniquement par la nouvelle requête, sans commentaire."""
 
-GENERATE_PROMPT = """Tu es un assistant spécialisé dans le Règlement \
-général sur la protection des données (RGPD). Réponds en {language_name} \
-à la question en t'appuyant uniquement sur les extraits ci-dessous et \
-cite les articles ou considérants utilisés. Si les extraits ne \
-permettent pas de répondre complètement, indique-le.
+# Personnalité de l'assistant, placée en tête du prompt de génération.
+# Le nom et le titre viennent de la configuration (ASSISTANT_NAME et
+# ASSISTANT_ROLE). L'assistant reste transparent sur sa nature d'IA :
+# l'utilisateur doit savoir qu'il ne parle pas à un humain.
+PERSONA = """Tu es {name}, {role}, spécialisé dans la protection des \
+données personnelles. Tu es un assistant d'intelligence artificielle : \
+si on te demande qui tu es, présente-toi comme l'assistant IA {name}, \
+sans jamais prétendre être une personne humaine.
+Ton style : clair, pédagogique et professionnel, avec une touche de \
+bienveillance. Tu vouvoies ton interlocuteur. Tu vas droit au but, puis \
+tu donnes un exemple concret quand c'est utile."""
+
+GENERATE_PROMPT = """{persona}
+
+Réponds en {language_name} à la question sur le Règlement général sur la \
+protection des données (RGPD) en t'appuyant uniquement sur les extraits \
+ci-dessous et cite les articles ou considérants utilisés. Si les \
+extraits ne permettent pas de répondre complètement, indique-le.
 {history_block}
 Extraits :
 {context}
@@ -102,14 +115,14 @@ LANGUAGE_NAMES = {"fr": "français", "en": "anglais"}
 # Réponse renvoyée quand aucun extrait pertinent n'a été trouvé.
 FALLBACK_ANSWERS = {
     "fr": (
-        "Je n'ai pas trouvé dans le RGPD d'extrait suffisamment pertinent "
-        "pour répondre de manière fiable à cette question. Essayez de la "
-        "reformuler ou de préciser l'article visé."
+        "Je n'ai pas trouvé dans le RGPD de passage suffisamment pertinent "
+        "pour vous répondre de manière fiable. Pourriez-vous reformuler "
+        "votre question ou préciser l'article qui vous intéresse ?"
     ),
     "en": (
         "I could not find a sufficiently relevant passage of the GDPR to "
-        "answer this question reliably. Try rephrasing it or specifying "
-        "the article concerned."
+        "answer you reliably. Could you rephrase your question or specify "
+        "the article you are interested in?"
     ),
 }
 
@@ -240,14 +253,26 @@ class CragAgent:
         top_k        : nombre d'extraits récupérés par recherche
         max_rewrites : nombre maximum de reformulations
         max_history  : nombre maximum d'échanges passés pris en compte
+        name, role   : nom et titre de l'assistant (sa personnalité)
     """
 
-    def __init__(self, retriever, llm, top_k=4, max_rewrites=2, max_history=6):
+    def __init__(
+        self,
+        retriever,
+        llm,
+        top_k=4,
+        max_rewrites=2,
+        max_history=6,
+        name="Martial",
+        role="Data & AI Engineer",
+    ):
         self.retriever = retriever
         self.llm = llm
         self.top_k = top_k
         self.max_rewrites = max_rewrites
         self.max_history = max_history
+        # Texte de personnalité, préparé une seule fois.
+        self.persona = PERSONA.format(name=name, role=role)
         self.graph = self.build_graph()
 
     def build_graph(self):
@@ -379,6 +404,7 @@ class CragAgent:
             history_block = ""
 
         prompt = GENERATE_PROMPT.format(
+            persona=self.persona,
             context=format_context(state["relevant_documents"]),
             question=state["standalone_question"],
             language_name=LANGUAGE_NAMES[state["language"]],
@@ -460,4 +486,6 @@ def create_default_agent(settings=None) -> CragAgent:
         settings.top_k,
         settings.max_rewrites,
         settings.max_history,
+        settings.assistant_name,
+        settings.assistant_role,
     )

@@ -11,7 +11,10 @@
 //   data-api-url  : adresse de l'API (par défaut : même serveur que
 //                   widget.js, suivi de /api)
 //   data-language : langue par défaut, « fr » ou « en » (défaut : fr)
-//   data-title    : titre affiché dans la fenêtre de chat
+//   data-title    : nom de l'assistant (défaut : Martial)
+//   data-role     : titre affiché sous le nom (défaut : Data & AI Engineer)
+//   data-avatar   : image de l'assistant (défaut : bot-avatar.png, à côté
+//                   de widget.js)
 //
 // Le widget utilise un « Shadow DOM » : ses styles sont isolés de ceux
 // du site hôte (ils ne s'influencent pas mutuellement).
@@ -36,23 +39,48 @@
         currentLanguage = "en";
     }
 
-    let title = "Assistant RGPD";
+    // Personnalité de l'assistant : son nom et son titre.
+    let title = "Martial";
     if (scriptTag.dataset.title) {
         title = scriptTag.dataset.title;
     }
 
+    let role = "Data & AI Engineer";
+    if (scriptTag.dataset.role) {
+        role = scriptTag.dataset.role;
+    }
+
+    // Image de l'assistant : par défaut, bot-avatar.png dans le même
+    // dossier que widget.js (même quand le widget est intégré sur un
+    // autre site).
+    let avatarUrl = new URL("bot-avatar.png", scriptTag.src).href;
+    if (scriptTag.dataset.avatar) {
+        avatarUrl = scriptTag.dataset.avatar;
+    }
+
+    // Crédit de l'image par défaut, obligatoire avec la licence gratuite
+    // de Magnific (Freepik).
+    const AVATAR_CREDIT_TEXT = "Image de roserodionova sur Magnific";
+    const AVATAR_CREDIT_URL =
+        "https://www.magnific.com/fr/vecteurs-libre/bot-mignon-dire-aux-utilisateurs-bonjour-chatbot-salue-consultation-ligne_4015765.htm";
+
     // Textes de l'interface dans chaque langue.
     const TEXTS = {
         fr: {
+            // {name} et {role} sont remplacés par le nom et le titre.
             welcome:
-                "Bonjour ! Posez-moi une question sur le RGPD. " +
-                "Je réponds à partir du texte officiel et je cite les articles utilisés.",
+                "Bonjour, je suis {name}, {role}. Je suis un assistant IA " +
+                "spécialisé dans le RGPD : posez-moi vos questions, je vous " +
+                "réponds à partir du texte officiel en citant les articles utilisés.",
             placeholder: "Écrivez votre question…",
             send: "Envoyer",
             sources: "Sources",
             rewrites: "Question reformulée",
             times: "fois",
             errorOllama: "Le modèle de langage est indisponible. Réessayez dans quelques instants.",
+            errorTimeout:
+                "La réponse prend trop de temps : le serveur est très sollicité. " +
+                "Réessayez dans quelques instants, si possible avec une question plus précise.",
             errorInvalid: "La question doit contenir entre 3 et 1000 caractères.",
             errorNetwork: "Impossible de joindre le serveur. Vérifiez votre connexion.",
             errorServer: "Erreur inattendue du serveur (code ",
@@ -62,14 +90,18 @@
         },
         en: {
             welcome:
-                "Hello! Ask me a question about the GDPR. " +
-                "I answer from the official text and cite the articles used.",
+                "Hello, I am {name}, {role}. I am an AI assistant specialised " +
+                "in the GDPR: ask me your questions, I answer from the official " +
+                "text and cite the articles used.",
             placeholder: "Type your question…",
             send: "Send",
             sources: "Sources",
             rewrites: "Question rephrased",
             times: "time(s)",
             errorOllama: "The language model is unavailable. Please try again shortly.",
+            errorTimeout:
+                "The answer is taking too long: the server is very busy. " +
+                "Please try again shortly, ideally with a more specific question.",
             errorInvalid: "The question must be between 3 and 1000 characters long.",
             errorNetwork: "Unable to reach the server. Check your connection.",
             errorServer: "Unexpected server error (code ",
@@ -142,6 +174,32 @@
             height: 28px;
         }
 
+        /* Quand l'image de l'assistant est chargée, la bulle devient un
+           rond blanc à bordure bleue qui affiche le robot. */
+        .launcher img {
+            display: none;
+            width: 46px;
+            height: 46px;
+            object-fit: contain;
+        }
+
+        .launcher.has-avatar {
+            background: #ffffff;
+            border: 3px solid var(--primary);
+        }
+
+        .launcher.has-avatar:hover {
+            background: #ffffff;
+        }
+
+        .launcher.has-avatar img {
+            display: block;
+        }
+
+        .launcher.has-avatar svg {
+            display: none;
+        }
+
         /* Fenêtre de discussion. */
         .panel {
             position: fixed;
@@ -173,10 +231,43 @@
             color: #ffffff;
         }
 
-        .header h2 {
+        /* Rond avec l'image de l'assistant (ou son initiale si l'image
+           ne peut pas être chargée). */
+        .avatar {
+            flex: none;
+            width: 40px;
+            height: 40px;
+            border-radius: 50%;
+            background: #ffffff;
+            color: var(--primary);
+            font-weight: 700;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            overflow: hidden;
+        }
+
+        .avatar img {
+            width: 34px;
+            height: 34px;
+            object-fit: contain;
+        }
+
+        .identity {
             flex: 1;
+            min-width: 0;
+        }
+
+        .header h2 {
             margin: 0;
             font-size: 16px;
+            line-height: 1.2;
+        }
+
+        .role {
+            margin: 0;
+            font-size: 12px;
+            opacity: 0.85;
         }
 
         .header select {
@@ -329,6 +420,23 @@
             background: var(--background);
         }
 
+        /* Crédit de l'image de l'assistant, discret sous l'avertissement. */
+        .credit {
+            margin: 0;
+            padding: 0 12px 8px;
+            font-size: 10px;
+            text-align: center;
+            background: var(--background);
+        }
+
+        .credit[hidden] {
+            display: none;
+        }
+
+        .credit a {
+            color: var(--text-light);
+        }
+
         /* Sur mobile, la fenêtre occupe tout l'écran. */
         @media (max-width: 480px) {
             .panel {
@@ -351,11 +459,16 @@
                  stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                 <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
             </svg>
+            <img alt="">
         </button>
 
         <section class="panel" role="dialog" aria-label="Assistant RGPD" hidden>
             <header class="header">
-                <h2 class="title"></h2>
+                <div class="avatar" aria-hidden="true"></div>
+                <div class="identity">
+                    <h2 class="title"></h2>
+                    <p class="role"></p>
+                </div>
                 <select class="language" aria-label="Langue du RGPD">
                     <option value="fr">FR</option>
                     <option value="en">EN</option>
@@ -371,6 +484,9 @@
                 <button type="submit"></button>
             </form>
             <p class="disclaimer"></p>
+            <p class="credit" hidden>
+                <a target="_blank" rel="noopener noreferrer"></a>
+            </p>
         </section>
     `;
 
@@ -427,7 +543,13 @@
         resetButton = shadow.querySelector(".reset");
         disclaimer = shadow.querySelector(".disclaimer");
 
+        // Nom, titre et initiale de l'assistant dans l'en-tête.
         shadow.querySelector(".title").textContent = title;
+        shadow.querySelector(".role").textContent = role;
+        shadow.querySelector(".avatar").textContent = title.charAt(0).toUpperCase();
+        loadAvatar(shadow);
+        panel.setAttribute("aria-label", title + ", " + role);
+        launcher.setAttribute("aria-label", "Discuter avec " + title);
 
         // On reprend la conversation en cours si le visiteur a changé de
         // page sur le site (sinon, on affiche le message d'accueil).
@@ -454,6 +576,38 @@
         });
     }
 
+    // ----- Image de l'assistant -----
+
+    function loadAvatar(shadow) {
+        // On charge l'image une fois : si elle est disponible, on
+        // l'affiche dans la bulle et dans l'en-tête ; sinon, la bulle
+        // garde son icône et l'en-tête l'initiale du nom.
+        const image = new Image();
+
+        image.onload = function () {
+            launcher.querySelector("img").src = avatarUrl;
+            launcher.classList.add("has-avatar");
+
+            const headerImage = document.createElement("img");
+            headerImage.src = avatarUrl;
+            headerImage.alt = "";
+            const avatar = shadow.querySelector(".avatar");
+            avatar.textContent = "";
+            avatar.appendChild(headerImage);
+
+            // Crédit obligatoire, seulement pour l'image fournie par défaut.
+            if (!scriptTag.dataset.avatar) {
+                const credit = shadow.querySelector(".credit");
+                const link = credit.querySelector("a");
+                link.textContent = AVATAR_CREDIT_TEXT;
+                link.href = AVATAR_CREDIT_URL;
+                credit.hidden = false;
+            }
+        };
+
+        image.src = avatarUrl;
+    }
+
     // ----- Ouverture et fermeture -----
 
     function togglePanel() {
@@ -466,7 +620,7 @@
 
     function openPanel() {
         panel.hidden = false;
-        launcher.setAttribute("aria-label", "Fermer l'assistant RGPD");
+        launcher.setAttribute("aria-label", "Fermer la discussion avec " + title);
         input.focus();
         // La zone des messages n'a de hauteur qu'une fois affichée : on
         // fait défiler jusqu'au dernier message à ce moment-là.
@@ -476,7 +630,7 @@
 
     function closePanel() {
         panel.hidden = true;
-        launcher.setAttribute("aria-label", "Ouvrir l'assistant RGPD");
+        launcher.setAttribute("aria-label", "Discuter avec " + title);
         launcher.focus();
         saveConversation();
     }
@@ -550,7 +704,7 @@
         updateTexts();
 
         // Réaffichage des messages : accueil puis chaque échange.
-        addBotMessage(TEXTS[currentLanguage].welcome, false);
+        addBotMessage(welcomeText(), false);
         for (const exchange of conversation) {
             addUserMessage(exchange.question);
             addBotAnswer(exchange);
@@ -565,7 +719,7 @@
     function resetConversation() {
         conversation = [];
         messages.innerHTML = "";
-        addBotMessage(TEXTS[currentLanguage].welcome, false);
+        addBotMessage(welcomeText(), false);
         saveConversation();
         input.focus();
     }
@@ -585,6 +739,13 @@
     }
 
     // ----- Affichage des messages -----
+
+    function welcomeText() {
+        // Message d'accueil avec le nom et le titre de l'assistant.
+        return TEXTS[currentLanguage].welcome
+            .replace("{name}", title)
+            .replace("{role}", role);
+    }
 
     function addUserMessage(text) {
         const bubble = document.createElement("div");
@@ -708,6 +869,9 @@
                 // Seuls les échanges réussis rejoignent la mémoire.
                 conversation.push(data);
                 saveConversation();
+            } else if (response.status === 504) {
+                // Délai dépassé (côté API ou côté nginx).
+                addBotMessage(texts.errorTimeout, true);
             } else if (response.status === 503) {
                 addBotMessage(texts.errorOllama, true);
             } else if (response.status === 422) {
