@@ -67,6 +67,11 @@ class Settings(BaseSettings):
     # compte pour la mémoire de conversation.
     max_history: int = 6
 
+    # ----- Personnalité de l'assistant -----
+    # Nom et titre utilisés dans le prompt de génération des réponses.
+    assistant_name: str = "Martial"
+    assistant_role: str = "Data & AI Engineer"
+
     # ----- API -----
     # Sites autorisés à appeler l'API depuis le navigateur (CORS), par
     # exemple quand le widget de chat est intégré sur un autre site.

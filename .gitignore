@@ -23,6 +23,14 @@ dist/
 .env.*
 !.env.example
 
+# Fichiers sources des images (licence Freepik / Magnific : la
+# redistribution des fichiers d'origine est interdite). Seul l'avatar
+# recadré frontend/bot-avatar.png fait partie du projet.
+/cute-bot-say-users-hello-chatbot-greets-online-consultation/
+/cute-bot-say-users-hello-chatbot-greets-online-consultation.zip
+/images.jpeg
+*.eps
+
 # IDE / OS
 .vscode/
 .idea/

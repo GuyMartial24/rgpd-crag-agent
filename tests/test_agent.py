@@ -10,6 +10,7 @@ d'environnement RUN_OLLAMA_TESTS vaut 1.
 
 import os
 
+import httpx
 import pytest
 from fastapi.testclient import TestClient
 
@@ -155,7 +156,7 @@ def test_fallback_when_rewrites_are_exhausted():
     assert len(retriever.queries) == 3
     # Le LLM n'a jamais été appelé pour rédiger une réponse.
     for prompt in llm.prompts:
-        assert not prompt.startswith("Tu es un assistant")
+        assert "cite les articles" not in prompt
 
 
 def test_generation_prompt_contains_only_relevant_extracts():
@@ -181,6 +182,32 @@ def test_language_is_used_for_search_and_answer():
 
     assert retriever.languages == ["en"]
     assert "Réponds en anglais" in llm.prompts[-1]
+
+
+def test_generation_prompt_contains_persona():
+    llm = FakeLLM()
+    agent = CragAgent(FakeRetriever({}, default=[ARTICLE_33]), llm)
+
+    agent.ask(QUESTION)
+
+    generation_prompt = llm.prompts[-1]
+    assert generation_prompt.startswith("Tu es Martial, Data & AI Engineer")
+    # L'assistant doit rester transparent sur sa nature d'IA.
+    assert "assistant d'intelligence artificielle" in generation_prompt
+
+
+def test_persona_name_and_role_are_configurable():
+    llm = FakeLLM()
+    agent = CragAgent(
+        FakeRetriever({}, default=[ARTICLE_33]),
+        llm,
+        name="Ada",
+        role="DPO",
+    )
+
+    agent.ask(QUESTION)
+
+    assert llm.prompts[-1].startswith("Tu es Ada, DPO")
 
 
 def test_fallback_answer_follows_language():
@@ -395,6 +422,21 @@ def test_ask_returns_503_when_ollama_is_down(client):
     response = client.post("/ask", json={"question": QUESTION})
 
     assert response.status_code == 503
+
+
+def test_ask_returns_504_when_ollama_is_too_slow(client):
+    class SlowLLM:
+        """Faux LLM qui simule un modèle trop lent (délai dépassé)."""
+
+        def invoke(self, prompt, json_mode=False):
+            raise httpx.ReadTimeout("timed out")
+
+    retriever = FakeRetriever({}, default=[ARTICLE_33])
+    use_fake_agent(CragAgent(retriever, SlowLLM()))
+
+    response = client.post("/ask", json={"question": QUESTION})
+
+    assert response.status_code == 504
 
 
 # ----- Évaluation de bout en bout (nécessite Ollama) -----

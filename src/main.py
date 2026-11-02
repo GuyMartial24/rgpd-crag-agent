@@ -9,6 +9,7 @@ Documentation interactive : http://localhost:8000/docs
 import logging
 from typing import Annotated, Literal
 
+import httpx
 from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from ollama import ResponseError
@@ -146,6 +147,14 @@ def ask_question(
 
     try:
         result = agent.ask(request.question, request.language, history)
+    except httpx.TimeoutException as error:
+        # Le modèle a mis plus de REQUEST_TIMEOUT secondes à répondre :
+        # code 504 (« délai dépassé ») au lieu d'une erreur 500.
+        logger.exception("Délai dépassé lors de l'appel à Ollama")
+        raise HTTPException(
+            status_code=504,
+            detail="Le modèle de langage a mis trop de temps à répondre.",
+        ) from error
     except (ConnectionError, ResponseError) as error:
         # Ollama est arrêté ou a renvoyé une erreur : on renvoie un code
         # 503 (« service indisponible ») au lieu d'une erreur 500.

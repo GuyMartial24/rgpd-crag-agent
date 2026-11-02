@@ -13,8 +13,9 @@ COPY nginx.conf /etc/nginx/conf.d/default.conf
 
 # Copie les fichiers dans le dossier servi par nginx :
 # - widget.js : le chatbot, intégrable sur n'importe quel site
+# - bot-avatar.png : image de l'assistant (affichée par le widget)
 # - index.html et page.css : la page de démonstration
-COPY index.html page.css widget.js /usr/share/nginx/html/
+COPY index.html page.css widget.js bot-avatar.png /usr/share/nginx/html/
 
 # nginx écoute sur le port 80 dans le conteneur.
 EXPOSE 80
