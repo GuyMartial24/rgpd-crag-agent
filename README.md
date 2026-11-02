@@ -22,16 +22,23 @@ pour que la recherche dans le RGPD reste pertinente.
 
 ```mermaid
 flowchart LR
-    S([Question + historique]) --> C[contextualize<br/>question autonome]
-    C --> R[retrieve<br/>ChromaDB]
-    R --> G{grade_documents<br/>LLM évaluateur}
+    S([Question + historique]) --> A{analyze_question<br/>type + question autonome}
+    A -- hors RGPD --> CH[chat<br/>réponse courte de Martial]
+    A -- RGPD --> R[retrieve<br/>ChromaDB]
+    R --> G{grade_documents<br/>tous les extraits en 1 appel}
     G -- extraits pertinents --> GEN[generate<br/>réponse sourcée]
     G -- aucun, essais restants --> T[transform_query<br/>reformulation]
     T --> R
     G -- aucun, essais épuisés --> F[fallback<br/>« je ne sais pas »]
     GEN --> E([Réponse + articles cités])
     F --> E
+    CH --> E
 ```
+
+Pour limiter le temps de réponse, une question RGPD ne demande que **3 appels au LLM** :
+l'analyse (qui détecte aussi les messages hors sujet comme « bonjour » ou « qui es-tu ? »),
+l'évaluation groupée des extraits, puis la rédaction. Les messages hors RGPD reçoivent une
+réponse directe en 2 appels, sans recherche.
 
 ### Martial, l'assistant
 
@@ -349,12 +356,13 @@ requêtes et restreindre `CORS_ORIGINS`.
 
 ## Limites connues
 
-- **Temps de réponse** : sur processeur, une question demande jusqu'à 6 appels au LLM
-  (contextualisation, évaluation de 4 extraits, génération). Avec `qwen2.5:14b`, une réponse
-  peut prendre plusieurs minutes ; un modèle plus léger (`LLM_MODEL=llama3.1` ou
-  `qwen2.5:7b`) réduit nettement ce délai.
-- **Questions hors RGPD** (« bonjour », « qui es-tu ? ») : elles passent par la recherche
-  documentaire et aboutissent à la réponse « je n'ai pas trouvé ».
+- **Temps de réponse** : sur processeur, même avec 3 appels au LLM par question, la
+  rédaction de la réponse reste l'étape la plus longue. Avec `qwen2.5:14b`, une réponse peut
+  prendre une à plusieurs minutes ; un modèle plus léger (`LLM_MODEL=qwen2.5:7b` ou
+  `llama3.1`) réduit nettement ce délai. La réponse n'est affichée qu'une fois complète
+  (pas encore de *streaming*).
+- **Aiguillage** : un message ambigu est traité comme une question RGPD (choix le plus sûr),
+  ce qui peut déclencher une recherche inutile.
 
 ## Crédits
 
