@@ -1,0 +1,152 @@
+# =====================================================================
+# Orchestration des services du projet avec Docker Compose
+#
+# Démarrage   : docker compose up -d --build
+# Logs        : docker compose logs -f api
+# Arrêt       : docker compose down
+# Tout effacer (modèles et base compris) : docker compose down -v
+#
+# Les services démarrent dans cet ordre :
+#   1. ollama      : serveur qui fait tourner les modèles d'IA
+#   2. ollama-pull : télécharge les modèles, puis s'arrête
+#   3. ingest      : indexe les PDF du RGPD dans ChromaDB, puis s'arrête
+#   4. api         : l'API FastAPI, accessible sur http://localhost:8000
+#   5. frontend    : l'interface web, accessible sur http://localhost:8080
+#
+# Valeurs modifiables dans un fichier .env placé à côté de ce fichier :
+#   LLM_MODEL, EMBEDDING_MODEL, OLLAMA_VERSION, API_PORT, FRONTEND_PORT
+# La syntaxe ${VARIABLE:-defaut} utilise « defaut » si la variable
+# n'est pas définie.
+# =====================================================================
+
+services:
+
+  # -------------------------------------------------------------------
+  # 1. Ollama : fait tourner le LLM et le modèle d'embedding en local
+  # -------------------------------------------------------------------
+  ollama:
+    image: ollama/ollama:${OLLAMA_VERSION:-latest}
+    volumes:
+      # Les modèles téléchargés sont gardés dans un volume : ils ne
+      # sont pas retéléchargés à chaque redémarrage.
+      - ollama_models:/root/.ollama
+    ports:
+      # Port de la machine : port du conteneur
+      - "11434:11434"
+    healthcheck:
+      # Le service est considéré « en bonne santé » quand la commande
+      # « ollama list » répond. Les autres services attendent ce signal.
+      test: ["CMD", "ollama", "list"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+    # Pour utiliser une carte graphique NVIDIA (beaucoup plus rapide),
+    # décommenter les lignes suivantes :
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: all
+    #           capabilities: [gpu]
+
+  # -------------------------------------------------------------------
+  # 2. Téléchargement des modèles (s'exécute une fois puis s'arrête)
+  # -------------------------------------------------------------------
+  ollama-pull:
+    # Même image qu'Ollama : on utilise seulement son outil en ligne de
+    # commande pour demander au serveur « ollama » de télécharger les
+    # modèles.
+    image: ollama/ollama:${OLLAMA_VERSION:-latest}
+    environment:
+      OLLAMA_HOST: http://ollama:11434
+      LLM_MODEL: ${LLM_MODEL:-llama3.2:3b}
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-bge-m3}
+    # Le double « $$ » indique à Docker Compose de ne pas remplacer la
+    # variable lui-même : c'est le shell du conteneur qui le fera.
+    entrypoint:
+      - /bin/sh
+      - -c
+      - ollama pull $$LLM_MODEL && ollama pull $$EMBEDDING_MODEL
+    depends_on:
+      ollama:
+        # On attend qu'Ollama soit prêt avant de télécharger.
+        condition: service_healthy
+    # Tâche ponctuelle : pas de redémarrage une fois terminée.
+    restart: "no"
+
+  # -------------------------------------------------------------------
+  # 3. Ingestion : indexe le RGPD dans ChromaDB (s'exécute puis s'arrête)
+  # -------------------------------------------------------------------
+  ingest:
+    # Image construite à partir du Dockerfile de ce dossier.
+    build: .
+    image: rgpd-crag-agent:latest
+    # --skip-if-exists : si la base est déjà remplie (redémarrage),
+    # l'ingestion ne recalcule rien.
+    command: ["python", "-m", "src.ingest", "--skip-if-exists"]
+    environment:
+      # Dans Docker, les services se joignent par leur nom : « ollama ».
+      OLLAMA_BASE_URL: http://ollama:11434
+      LLM_MODEL: ${LLM_MODEL:-llama3.2:3b}
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-bge-m3}
+      CHROMA_PATH: /app/chroma_db
+    volumes:
+      # Même volume que l'API : la base créée ici sera lue par l'API.
+      - chroma_data:/app/chroma_db
+    depends_on:
+      ollama-pull:
+        # On attend que les modèles soient téléchargés.
+        condition: service_completed_successfully
+    restart: "no"
+
+  # -------------------------------------------------------------------
+  # 4. API FastAPI
+  # -------------------------------------------------------------------
+  api:
+    build: .
+    image: rgpd-crag-agent:latest
+    ports:
+      # Port de la machine (8000 par défaut) : port du conteneur
+      - "${API_PORT:-8000}:8000"
+    environment:
+      OLLAMA_BASE_URL: http://ollama:11434
+      LLM_MODEL: ${LLM_MODEL:-llama3.2:3b}
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-bge-m3}
+      CHROMA_PATH: /app/chroma_db
+    volumes:
+      - chroma_data:/app/chroma_db
+    depends_on:
+      ingest:
+        # L'API démarre seulement quand l'ingestion s'est bien terminée.
+        condition: service_completed_successfully
+    # En cas de plantage, Docker relance automatiquement l'API.
+    restart: unless-stopped
+
+  # -------------------------------------------------------------------
+  # 5. Interface web (nginx), accessible sur http://localhost:8080
+  # -------------------------------------------------------------------
+  frontend:
+    # Image construite à partir de frontend/Dockerfile.
+    build: ./frontend
+    image: rgpd-crag-agent-frontend:latest
+    ports:
+      # Port de la machine (8080 par défaut) : port du conteneur
+      - "${FRONTEND_PORT:-8080}:80"
+    depends_on:
+      api:
+        # nginx doit pouvoir joindre l'API dès son démarrage : on attend
+        # que son contrôle de santé (défini dans le Dockerfile) réussisse.
+        condition: service_healthy
+    restart: unless-stopped
+
+# ---------------------------------------------------------------------
+# Volumes : espaces de stockage gérés par Docker, conservés même
+# quand les conteneurs sont supprimés (sauf avec « down -v »).
+# ---------------------------------------------------------------------
+volumes:
+  # Modèles téléchargés par Ollama (plusieurs Go).
+  ollama_models:
+  # Base vectorielle ChromaDB, partagée entre « ingest » et « api ».
+  chroma_data:
