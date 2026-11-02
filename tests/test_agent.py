@@ -8,6 +8,7 @@ Ollama et la vraie base. Elle n'est lancée que si la variable
 d'environnement RUN_OLLAMA_TESTS vaut 1.
 """
 
+import json
 import os
 
 import httpx
@@ -18,7 +19,9 @@ from src.graph import (
     FALLBACK_ANSWERS,
     CragAgent,
     format_history,
+    parse_analysis,
     parse_grade,
+    parse_relevant_numbers,
 )
 from src.main import app, get_agent
 
@@ -48,10 +51,14 @@ STANDALONE_QUESTION = "À qui faut-il notifier une violation de données ?"
 class FakeLLM:
     """Faux LLM qui répond selon le type de prompt reçu.
 
-    - contextualisation : renvoie une question autonome fixe ;
-    - évaluation : un extrait est pertinent s'il contient « 72 heures » ;
+    - analyse : renvoie le type de question (« rgpd » par défaut) et la
+      question autonome (la question elle-même s'il n'y a pas de
+      conversation, sinon « standalone ») ;
+    - évaluation groupée : les extraits contenant « 72 heures » sont
+      pertinents (ou « grade_answer » si on veut forcer la réponse) ;
+    - évaluation d'un seul extrait (secours) : même règle ;
     - reformulation : renvoie toujours la même requête ;
-    - génération : renvoie une réponse fixe.
+    - discussion hors RGPD et génération : réponses fixes.
     Tous les prompts reçus sont gardés dans self.prompts.
     """
 
@@ -59,20 +66,43 @@ class FakeLLM:
         self,
         rewrite="délai de notification d'une violation",
         standalone=STANDALONE_QUESTION,
+        question_type="rgpd",
+        grade_answer=None,
     ):
         self.rewrite = rewrite
         self.standalone = standalone
+        self.question_type = question_type
+        self.grade_answer = grade_answer
         self.prompts = []
 
     def invoke(self, prompt, json_mode=False):
         self.prompts.append(prompt)
 
-        # Prompt de contextualisation (question de relance).
-        if prompt.startswith("Voici une conversation"):
-            return f"« {self.standalone} »"
+        # Prompt d'analyse de la question (premier appel).
+        if prompt.startswith("Tu analyses"):
+            message = prompt.split("Dernier message : ")[1].split("\n")[0]
+            if "Conversation précédente :\n(aucune)" in prompt:
+                question = message
+            else:
+                question = self.standalone
+            return json.dumps(
+                {"type": self.question_type, "question": question}
+            )
 
-        # Prompt d'évaluation (le seul envoyé en mode JSON).
-        if json_mode:
+        # Évaluation groupée : on renvoie les numéros des bons extraits.
+        if prompt.startswith("Tu évalues des extraits"):
+            if self.grade_answer is not None:
+                return self.grade_answer
+            numbers = []
+            extracts = prompt.split("Extraits :")[1].split("\n\n")
+            for block in extracts:
+                block = block.strip()
+                if block.startswith("[") and "72 heures" in block:
+                    numbers.append(int(block[1 : block.index("]")]))
+            return json.dumps({"pertinents": numbers})
+
+        # Évaluation d'un seul extrait (secours).
+        if prompt.startswith("Tu évalues si un extrait"):
             extract = prompt.split("Extrait :")[1]
             if "72 heures" in extract:
                 return '{"pertinent": "oui"}'
@@ -81,6 +111,10 @@ class FakeLLM:
         # Prompt de reformulation.
         if prompt.startswith("La recherche"):
             return f"« {self.rewrite} »"
+
+        # Message hors RGPD.
+        if "ne porte pas sur le RGPD" in prompt:
+            return "Bonjour, je suis Martial, assistant IA."
 
         # Prompt de génération de la réponse.
         return "Sous 72 heures (Article 33)."
@@ -219,21 +253,72 @@ def test_fallback_answer_follows_language():
     assert result["answer"] == FALLBACK_ANSWERS["en"]
 
 
+# ----- Rapidité : nombre d'appels au LLM -----
+
+
+def test_rgpd_question_needs_only_three_llm_calls():
+    llm = FakeLLM()
+    retriever = FakeRetriever({}, default=[ARTICLE_33, ARTICLE_1])
+    agent = CragAgent(retriever, llm)
+
+    agent.ask(QUESTION)
+
+    # 1 analyse + 1 évaluation groupée des extraits + 1 génération.
+    assert len(llm.prompts) == 3
+
+
+def test_unreadable_grading_falls_back_to_one_by_one():
+    # Le LLM répond n'importe quoi à l'évaluation groupée.
+    llm = FakeLLM(grade_answer="je ne sais pas")
+    retriever = FakeRetriever({}, default=[ARTICLE_33, ARTICLE_1])
+    agent = CragAgent(retriever, llm)
+
+    result = agent.ask(QUESTION)
+
+    # Les 2 extraits ont alors été évalués un par un.
+    one_by_one = []
+    for prompt in llm.prompts:
+        if prompt.startswith("Tu évalues si un extrait"):
+            one_by_one.append(prompt)
+    assert len(one_by_one) == 2
+    assert result["sources"] == ["Article 33"]
+
+
+# ----- Aiguillage des messages hors RGPD -----
+
+
+def test_off_topic_message_gets_a_direct_answer():
+    llm = FakeLLM(question_type="autre")
+    retriever = FakeRetriever({}, default=[ARTICLE_33])
+    agent = CragAgent(retriever, llm)
+
+    result = agent.ask("Bonjour, qui êtes-vous ?")
+
+    # Aucune recherche dans le RGPD, et seulement 2 appels au LLM.
+    assert retriever.queries == []
+    assert len(llm.prompts) == 2
+    assert result["answer"] == "Bonjour, je suis Martial, assistant IA."
+    assert result["sources"] == []
+    assert result["search_query"] == ""
+    # La réponse garde la personnalité de l'assistant.
+    assert llm.prompts[1].startswith("Tu es Martial, Data & AI Engineer")
+
+
 # ----- Mémoire de conversation -----
 
 
-def test_first_question_skips_contextualization():
+def test_first_question_is_used_as_is():
     llm = FakeLLM()
     retriever = FakeRetriever({}, default=[ARTICLE_33])
     agent = CragAgent(retriever, llm)
 
     result = agent.ask(QUESTION)
 
-    # Sans historique, la question est utilisée telle quelle et le LLM
-    # n'est pas appelé pour la réécrire.
+    # Sans historique, l'analyse indique « (aucune) » conversation et la
+    # question est cherchée telle quelle.
+    assert "Conversation précédente :\n(aucune)" in llm.prompts[0]
     assert result["standalone_question"] == QUESTION
-    for prompt in llm.prompts:
-        assert not prompt.startswith("Voici une conversation")
+    assert retriever.queries == [QUESTION]
 
 
 def test_follow_up_question_is_rewritten_with_history():
@@ -244,10 +329,10 @@ def test_follow_up_question_is_rewritten_with_history():
     result = agent.ask(FOLLOW_UP, history=HISTORY)
 
     # Le LLM a reçu l'historique et la relance.
-    contextualize_prompt = llm.prompts[0]
-    assert "Utilisateur : " + QUESTION in contextualize_prompt
-    assert "Nouvelle question : " + FOLLOW_UP in contextualize_prompt
-    # La recherche utilise la question réécrite (guillemets retirés).
+    analysis_prompt = llm.prompts[0]
+    assert "Utilisateur : " + QUESTION in analysis_prompt
+    assert "Dernier message : " + FOLLOW_UP in analysis_prompt
+    # La recherche utilise la question réécrite.
     assert result["standalone_question"] == STANDALONE_QUESTION
     assert retriever.queries == [STANDALONE_QUESTION]
 
@@ -277,10 +362,10 @@ def test_only_recent_history_is_used():
     agent.ask(FOLLOW_UP, history=history)
 
     # Seuls les 2 derniers échanges (4 et 5) sont envoyés au LLM.
-    contextualize_prompt = llm.prompts[0]
-    assert "Question 3" not in contextualize_prompt
-    assert "Question 4" in contextualize_prompt
-    assert "Question 5" in contextualize_prompt
+    analysis_prompt = llm.prompts[0]
+    assert "Question 3" not in analysis_prompt
+    assert "Question 4" in analysis_prompt
+    assert "Question 5" in analysis_prompt
 
 
 def test_long_answers_are_truncated_in_history():
@@ -293,7 +378,44 @@ def test_long_answers_are_truncated_in_history():
     assert "a" * 501 not in text
 
 
-# ----- Lecture de la réponse de l'évaluateur -----
+# ----- Lecture des réponses JSON du LLM -----
+
+
+@pytest.mark.parametrize(
+    ("llm_answer", "expected"),
+    [
+        ('{"type": "rgpd", "question": "Q2"}', ("rgpd", "Q2")),
+        ('{"type": "autre", "question": "Bonjour"}', ("autre", "Bonjour")),
+        ('{"type": "Autre", "question": ""}', ("autre", "Q")),
+        ('{"question": "Q2"}', ("rgpd", "Q2")),
+        ("pas du JSON", ("rgpd", "Q")),
+        ('["rgpd"]', ("rgpd", "Q")),
+    ],
+)
+def test_parse_analysis(llm_answer, expected):
+    # En cas de doute, la question est traitée comme une question RGPD.
+    assert parse_analysis(llm_answer, "Q") == expected
+
+
+@pytest.mark.parametrize(
+    ("llm_answer", "expected"),
+    [
+        ('{"pertinents": [1, 3]}', [1, 3]),
+        ('{"pertinents": []}', []),
+        ('{"relevant": ["2", "4"]}', [2, 4]),
+        ("[2]", [2]),
+        ('{"pertinents": [1, 1, 9]}', [1]),
+        ('{"pertinents": "1"}', None),
+        ("{}", None),
+        ("aucun", None),
+    ],
+)
+def test_parse_relevant_numbers(llm_answer, expected):
+    # 4 extraits : seuls les numéros de 1 à 4 sont valides.
+    assert parse_relevant_numbers(llm_answer, 4) == expected
+
+
+# ----- Lecture de la réponse de l'évaluateur (secours) -----
 
 
 @pytest.mark.parametrize(
@@ -366,6 +488,17 @@ def test_ask_endpoint(client):
         "search_query": QUESTION,
         "rewrites": 0,
     }
+
+
+def test_ask_endpoint_off_topic_message(client):
+    retriever = FakeRetriever({}, default=[ARTICLE_33])
+    use_fake_agent(CragAgent(retriever, FakeLLM(question_type="autre")))
+
+    response = client.post("/ask", json={"question": "Merci beaucoup !"})
+
+    assert response.status_code == 200
+    assert response.json()["sources"] == []
+    assert response.json()["search_query"] == ""
 
 
 def test_ask_endpoint_with_history(client):

@@ -3,13 +3,18 @@
 Un RAG classique répond à partir des extraits trouvés, même s'ils ne
 parlent pas du sujet. Le CRAG ajoute une étape de vérification :
 
-    0. contextualize   : si une conversation est en cours, la question
-                         est réécrite pour être compréhensible seule
-                         (ex. « et pour les mineurs ? » devient « Quelles
-                         sont les conditions du consentement pour les
-                         mineurs ? ») ;
-    1. retrieve        : on cherche des extraits du RGPD dans ChromaDB ;
-    2. grade_documents : le LLM juge si chaque extrait est pertinent ;
+    0. analyze_question : en un seul appel au LLM, on détermine si la
+                          question porte sur le RGPD et on la réécrit
+                          pour qu'elle soit compréhensible seule
+                          (ex. « et pour les mineurs ? » devient
+                          « Quelles sont les conditions du consentement
+                          pour les mineurs ? ») ;
+       - question hors RGPD (« bonjour », « qui es-tu ? »)
+                                        -> chat (réponse courte, sans
+                                           recherche) ;
+    1. retrieve         : on cherche des extraits du RGPD dans ChromaDB ;
+    2. grade_documents  : le LLM juge, en un seul appel, quels extraits
+                          sont pertinents ;
     3. ensuite, trois cas possibles :
        - au moins un extrait pertinent  -> generate (on répond) ;
        - aucun, mais essais restants     -> transform_query (on
@@ -37,22 +42,44 @@ from src.config import Settings, get_settings
 # ligne dans le texte) : il permet de respecter 79 caractères par ligne.
 # ---------------------------------------------------------------------
 
-CONTEXTUALIZE_PROMPT = """Voici une conversation sur le RGPD, suivie \
-d'une nouvelle question de l'utilisateur.
+ANALYZE_PROMPT = """Tu analyses le dernier message d'un utilisateur qui \
+discute avec un assistant spécialisé dans le RGPD.
 
-Conversation :
+Conversation précédente :
 {history}
 
-Nouvelle question : {question}
+Dernier message : {question}
 
-Si la nouvelle question fait référence à la conversation (pronom, sujet \
-sous-entendu, « et pour... », « pourquoi ? »...), réécris-la en une \
-question complète et compréhensible seule, en {language_name}. Sinon, \
-renvoie-la telle quelle.
-Réponds uniquement par la question, sans commentaire."""
+Donne deux informations :
+1. « type » : « rgpd » si le message porte, même indirectement, sur le \
+RGPD, les données personnelles, la vie privée, la CNIL ou les \
+obligations d'une organisation ; « autre » pour une salutation, un \
+remerciement, une question sur l'assistant lui-même ou un sujet sans \
+rapport. En cas de doute, choisis « rgpd ».
+2. « question » : le message réécrit en {language_name} pour être \
+compréhensible sans la conversation (pronom, sujet sous-entendu, « et \
+pour... »). S'il est déjà clair, recopie-le tel quel.
 
-GRADE_PROMPT = """Tu évalues si un extrait du RGPD aide à répondre à une \
+Réponds uniquement en JSON : {{"type": "rgpd", "question": "..."}}"""
+
+GRADE_PROMPT = """Tu évalues des extraits du RGPD pour répondre à une \
 question.
+
+Question : {question}
+
+Extraits :
+{documents}
+
+Un extrait est pertinent s'il contient des informations utiles pour \
+répondre, même partiellement.
+Réponds uniquement en JSON avec la liste des numéros des extraits \
+pertinents, par exemple {{"pertinents": [1, 3]}}, ou \
+{{"pertinents": []}} si aucun ne l'est."""
+
+# Évaluation d'un seul extrait : utilisée seulement en secours, si la
+# réponse à l'évaluation groupée est illisible.
+GRADE_ONE_PROMPT = """Tu évalues si un extrait du RGPD aide à répondre à \
+une question.
 
 Question : {question}
 
@@ -76,7 +103,7 @@ RGPD qui y répondent, en employant le vocabulaire du règlement \
 "data subject", « autorité de contrôle » / "supervisory authority"...).
 Réponds uniquement par la nouvelle requête, sans commentaire."""
 
-# Personnalité de l'assistant, placée en tête du prompt de génération.
+# Personnalité de l'assistant, placée en tête des prompts de réponse.
 # Le nom et le titre viennent de la configuration (ASSISTANT_NAME et
 # ASSISTANT_ROLE). L'assistant reste transparent sur sa nature d'IA :
 # l'utilisateur doit savoir qu'il ne parle pas à un humain.
@@ -102,7 +129,20 @@ Question : {question}
 
 Réponse :"""
 
-# Bloc ajouté au prompt de génération quand une conversation est en
+# Réponse aux messages qui ne portent pas sur le RGPD (salutation,
+# remerciement, « qui es-tu ? »...) : aucune recherche n'est faite.
+CHAT_PROMPT = """{persona}
+
+L'utilisateur t'écrit un message qui ne porte pas sur le RGPD \
+(salutation, remerciement, question sur toi...).
+{history_block}
+Message : {question}
+
+Réponds en {language_name}, en deux ou trois phrases au maximum : \
+réponds simplement et poliment, puis rappelle que tu es là pour \
+répondre aux questions sur le RGPD et la protection des données."""
+
+# Bloc ajouté aux prompts de réponse quand une conversation est en
 # cours, pour que la réponse reste cohérente avec les échanges passés.
 HISTORY_BLOCK = """
 Conversation précédente (pour le contexte uniquement) :
@@ -142,6 +182,7 @@ class AgentState(TypedDict, total=False):
     question: str  # question posée par l'utilisateur
     language: str  # « fr » ou « en »
     history: list[dict]  # échanges précédents {"question", "answer"}
+    question_type: str  # « rgpd » ou « autre »
     standalone_question: str  # question compréhensible sans l'historique
     search_query: str  # requête utilisée pour la recherche
     documents: list[dict]  # extraits trouvés par la recherche
@@ -183,8 +224,75 @@ class OllamaLLM:
         return response.message.content
 
 
+# ---------------------------------------------------------------------
+# Lecture des réponses JSON du LLM
+# Un LLM ne respecte pas toujours parfaitement le format demandé : ces
+# fonctions sont tolérantes et prévoient une valeur par défaut sûre.
+# ---------------------------------------------------------------------
+
+
+def parse_analysis(llm_answer: str, question: str) -> tuple[str, str]:
+    """Lit la réponse de l'analyse : (type, question autonome).
+
+    En cas de réponse illisible, on considère que la question porte sur
+    le RGPD et on la garde telle quelle : c'est le choix le plus sûr.
+    """
+    question_type = "rgpd"
+    standalone_question = question
+
+    try:
+        data = json.loads(llm_answer)
+    except json.JSONDecodeError:
+        return question_type, standalone_question
+
+    if not isinstance(data, dict):
+        return question_type, standalone_question
+
+    if str(data.get("type", "")).strip().lower() == "autre":
+        question_type = "autre"
+
+    rewritten = str(data.get("question", "")).strip().strip("\"'« »")
+    if rewritten != "":
+        standalone_question = rewritten
+
+    return question_type, standalone_question
+
+
+def parse_relevant_numbers(llm_answer: str, count: int):
+    """Lit les numéros des extraits pertinents (de 1 à count).
+
+    Retourne une liste de numéros, ou None si la réponse est illisible
+    (l'agent évalue alors les extraits un par un).
+    """
+    try:
+        data = json.loads(llm_answer)
+    except json.JSONDecodeError:
+        return None
+
+    # Réponse attendue : {"pertinents": [1, 3]}. On accepte aussi une
+    # clé portant un autre nom, ou directement une liste [1, 3].
+    if isinstance(data, dict):
+        values = list(data.values())
+        if len(values) == 0:
+            return None
+        data = values[0]
+
+    if not isinstance(data, list):
+        return None
+
+    numbers = []
+    for item in data:
+        # Le LLM écrit parfois les numéros entre guillemets : "1".
+        if isinstance(item, str) and item.strip().isdigit():
+            item = int(item.strip())
+        if isinstance(item, int) and 1 <= item <= count:
+            if item not in numbers:
+                numbers.append(item)
+    return numbers
+
+
 def parse_grade(llm_answer: str) -> bool:
-    """Transforme la réponse de l'évaluateur en booléen.
+    """Transforme la réponse de l'évaluation d'un extrait en booléen.
 
     Le LLM doit répondre en JSON, par exemple {"pertinent": "oui"}, mais
     on reste tolérant : on accepte aussi du texte simple. Tout ce qui ne
@@ -220,11 +328,24 @@ def parse_grade(llm_answer: str) -> bool:
     )
 
 
+# ---------------------------------------------------------------------
+# Mise en forme des textes insérés dans les prompts
+# ---------------------------------------------------------------------
+
+
 def format_context(documents: list[dict]) -> str:
-    """Met les extraits bout à bout pour les insérer dans le prompt."""
+    """Met les extraits bout à bout pour le prompt de génération."""
     parts = []
     for document in documents:
         parts.append(f"[{document['section']}]\n{document['text']}")
+    return "\n\n".join(parts)
+
+
+def format_numbered_documents(documents: list[dict]) -> str:
+    """Numérote les extraits ([1], [2]...) pour l'évaluation groupée."""
+    parts = []
+    for number, document in enumerate(documents, start=1):
+        parts.append(f"[{number}] {document['text']}")
     return "\n\n".join(parts)
 
 
@@ -242,6 +363,13 @@ def format_history(history: list[dict]) -> str:
         lines.append("Utilisateur : " + exchange["question"])
         lines.append("Assistant : " + answer)
     return "\n".join(lines)
+
+
+def make_history_block(history: list[dict]) -> str:
+    """Bloc « conversation précédente » des prompts de réponse."""
+    if len(history) == 0:
+        return ""
+    return HISTORY_BLOCK.format(history=format_history(history))
 
 
 class CragAgent:
@@ -280,7 +408,8 @@ class CragAgent:
         workflow = StateGraph(AgentState)
 
         # Chaque nœud est une étape de l'agent.
-        workflow.add_node("contextualize", self.contextualize)
+        workflow.add_node("analyze_question", self.analyze_question)
+        workflow.add_node("chat", self.chat)
         workflow.add_node("retrieve", self.retrieve)
         workflow.add_node("grade_documents", self.grade_documents)
         workflow.add_node("transform_query", self.transform_query)
@@ -288,8 +417,14 @@ class CragAgent:
         workflow.add_node("fallback", self.fallback)
 
         # Les arêtes indiquent l'ordre des étapes.
-        workflow.add_edge(START, "contextualize")
-        workflow.add_edge("contextualize", "retrieve")
+        workflow.add_edge(START, "analyze_question")
+
+        # Aiguillage : question RGPD -> recherche ; sinon -> chat.
+        workflow.add_conditional_edges(
+            "analyze_question",
+            self.route_question,
+            {"retrieve": "retrieve", "chat": "chat"},
+        )
         workflow.add_edge("retrieve", "grade_documents")
 
         # Après l'évaluation, decide_next_step choisit l'étape suivante.
@@ -307,33 +442,51 @@ class CragAgent:
         workflow.add_edge("transform_query", "retrieve")
         workflow.add_edge("generate", END)
         workflow.add_edge("fallback", END)
+        workflow.add_edge("chat", END)
 
         return workflow.compile()
 
     # ----- Étapes du graphe -----
 
-    def contextualize(self, state: AgentState) -> dict:
-        """Étape 0 : rend la question compréhensible sans l'historique."""
+    def analyze_question(self, state: AgentState) -> dict:
+        """Étape 0 : type de la question et question autonome."""
         history = state.get("history", [])
+        if len(history) > 0:
+            history_text = format_history(history)
+        else:
+            history_text = "(aucune)"
 
-        # Première question de la conversation : rien à faire, et on
-        # économise un appel au LLM.
-        if len(history) == 0:
-            return {"standalone_question": state["question"]}
-
-        prompt = CONTEXTUALIZE_PROMPT.format(
-            history=format_history(history),
+        prompt = ANALYZE_PROMPT.format(
+            history=history_text,
             question=state["question"],
             language_name=LANGUAGE_NAMES[state["language"]],
         )
-        standalone_question = self.llm.invoke(prompt)
-        standalone_question = standalone_question.strip().strip("\"'« »")
+        llm_answer = self.llm.invoke(prompt, json_mode=True)
+        question_type, standalone_question = parse_analysis(
+            llm_answer, state["question"]
+        )
 
-        # Si le LLM ne renvoie rien, on garde la question d'origine.
-        if standalone_question == "":
-            standalone_question = state["question"]
+        return {
+            "question_type": question_type,
+            "standalone_question": standalone_question,
+        }
 
-        return {"standalone_question": standalone_question}
+    def route_question(self, state: AgentState) -> str:
+        """Choisit l'étape suivante après l'analyse de la question."""
+        if state["question_type"] == "autre":
+            return "chat"
+        return "retrieve"
+
+    def chat(self, state: AgentState) -> dict:
+        """Réponse courte à un message hors RGPD, sans recherche."""
+        prompt = CHAT_PROMPT.format(
+            persona=self.persona,
+            history_block=make_history_block(state.get("history", [])),
+            question=state["question"],
+            language_name=LANGUAGE_NAMES[state["language"]],
+        )
+        answer = self.llm.invoke(prompt)
+        return {"answer": answer.strip(), "search_query": ""}
 
     def retrieve(self, state: AgentState) -> dict:
         """Étape 1 : cherche des extraits du RGPD."""
@@ -347,20 +500,45 @@ class CragAgent:
         return {"search_query": query, "documents": documents}
 
     def grade_documents(self, state: AgentState) -> dict:
-        """Étape 2 : garde uniquement les extraits jugés pertinents."""
-        relevant_documents = []
+        """Étape 2 : garde uniquement les extraits jugés pertinents.
 
+        Tous les extraits sont évalués en un seul appel au LLM. Si sa
+        réponse est illisible, on les évalue un par un (plus lent, mais
+        plus fiable).
+        """
+        documents = state["documents"]
+        if len(documents) == 0:
+            return {"relevant_documents": []}
+
+        prompt = GRADE_PROMPT.format(
+            question=state["standalone_question"],
+            documents=format_numbered_documents(documents),
+        )
+        llm_answer = self.llm.invoke(prompt, json_mode=True)
+        numbers = parse_relevant_numbers(llm_answer, len(documents))
+
+        if numbers is None:
+            return {"relevant_documents": self.grade_one_by_one(state)}
+
+        # On garde l'ordre de la recherche (du plus proche au plus loin).
+        relevant_documents = []
+        for number, document in enumerate(documents, start=1):
+            if number in numbers:
+                relevant_documents.append(document)
+        return {"relevant_documents": relevant_documents}
+
+    def grade_one_by_one(self, state: AgentState) -> list[dict]:
+        """Évaluation de secours : un appel au LLM par extrait."""
+        relevant_documents = []
         for document in state["documents"]:
-            prompt = GRADE_PROMPT.format(
+            prompt = GRADE_ONE_PROMPT.format(
                 question=state["standalone_question"],
                 document=document["text"],
             )
             llm_answer = self.llm.invoke(prompt, json_mode=True)
-
             if parse_grade(llm_answer):
                 relevant_documents.append(document)
-
-        return {"relevant_documents": relevant_documents}
+        return relevant_documents
 
     def decide_next_step(self, state: AgentState) -> str:
         """Choisit l'étape suivante après l'évaluation des extraits."""
@@ -395,20 +573,12 @@ class CragAgent:
 
     def generate(self, state: AgentState) -> dict:
         """Étape 3b : rédige la réponse à partir des extraits pertinents."""
-        history = state.get("history", [])
-        if len(history) > 0:
-            history_block = HISTORY_BLOCK.format(
-                history=format_history(history)
-            )
-        else:
-            history_block = ""
-
         prompt = GENERATE_PROMPT.format(
             persona=self.persona,
             context=format_context(state["relevant_documents"]),
             question=state["standalone_question"],
             language_name=LANGUAGE_NAMES[state["language"]],
-            history_block=history_block,
+            history_block=make_history_block(state.get("history", [])),
         )
         answer = self.llm.invoke(prompt)
         return {"answer": answer.strip()}
@@ -434,6 +604,7 @@ class CragAgent:
             sources             : les articles/considérants utilisés
             standalone_question : la question réécrite avec le contexte
             search_query        : la dernière requête de recherche
+                                  (vide pour un message hors RGPD)
             rewrites            : le nombre de reformulations effectuées
         """
         if history is None:
@@ -462,7 +633,7 @@ class CragAgent:
             "answer": final_state["answer"],
             "sources": sources,
             "standalone_question": final_state["standalone_question"],
-            "search_query": final_state["search_query"],
+            "search_query": final_state.get("search_query", ""),
             "rewrites": final_state.get("rewrites", 0),
         }
 
