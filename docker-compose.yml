@@ -31,8 +31,11 @@ services:
       # sont pas retéléchargés à chaque redémarrage.
       - ollama_models:/root/.ollama
     ports:
-      # Port de la machine : port du conteneur
-      - "11434:11434"
+      # Port de la machine : port du conteneur.
+      # « 127.0.0.1 » : accessible uniquement depuis la machine elle-même.
+      # Sur un VPS, Ollama ne doit surtout pas être ouvert à Internet
+      # (n'importe qui pourrait utiliser vos modèles).
+      - "127.0.0.1:11434:11434"
     healthcheck:
       # Le service est considéré « en bonne santé » quand la commande
       # « ollama list » répond. Les autres services attendent ce signal.
@@ -108,8 +111,10 @@ services:
     build: .
     image: rgpd-crag-agent:latest
     ports:
-      # Port de la machine (8000 par défaut) : port du conteneur
-      - "${API_PORT:-8000}:8000"
+      # Port de la machine (8000 par défaut) : port du conteneur.
+      # Limité à la machine elle-même : depuis l'extérieur, on passe par
+      # l'interface web, qui transmet les appels /api/ à l'API.
+      - "127.0.0.1:${API_PORT:-8000}:8000"
     environment:
       OLLAMA_BASE_URL: http://ollama:11434
       LLM_MODEL: ${LLM_MODEL:-llama3.2:3b}
@@ -132,7 +137,8 @@ services:
     build: ./frontend
     image: rgpd-crag-agent-frontend:latest
     ports:
-      # Port de la machine (8080 par défaut) : port du conteneur
+      # Port de la machine (8080 par défaut) : port du conteneur.
+      # Seul service ouvert à Internet sur un VPS.
       - "${FRONTEND_PORT:-8080}:80"
     depends_on:
       api:

@@ -1,6 +1,6 @@
 # rgpd-crag-agent
 
-[![CI](https://github.com/GuyMartial24/rgpd-crag-agent/actions/workflows/ci.yml/badge.svg)](https://github.com/GuyMartial24/rgpd-crag-agent/actions/workflows/ci.yml)
+[![CI/CD](https://github.com/GuyMartial24/rgpd-crag-agent/actions/workflows/ci_cd.yml/badge.svg)](https://github.com/GuyMartial24/rgpd-crag-agent/actions/workflows/ci_cd.yml)
 
 Agent **Corrective RAG (CRAG)** bilingue (français / anglais) de questions-réponses sur le
 **RGPD**, construit avec
@@ -36,7 +36,7 @@ flowchart LR
 
 ```
 rgpd-crag-agent/
-├── .github/workflows/ci.yml   # Pipeline GitHub Actions (lint, tests, build Docker)
+├── .github/workflows/ci_cd.yml # CI/CD GitHub Actions (lint, tests, build Docker, déploiement)
 ├── data/
 │   ├── RGPD_FR.pdf            # Texte officiel du RGPD en français (JO L 119 du 4.5.2016)
 │   └── RGPD_EN.pdf            # Texte officiel du RGPD en anglais
@@ -191,6 +191,60 @@ s'active avec Ollama démarré et le corpus indexé :
 ```bash
 RUN_OLLAMA_TESTS=1 python -m pytest tests/test_agent.py -v
 ```
+
+## Déploiement continu (VPS)
+
+Chaque fusion sur `main` déclenche, si le lint, les tests et les builds Docker réussissent,
+le job `deploy` du [workflow CI/CD](.github/workflows/ci_cd.yml) :
+
+```
+push sur main → lint → tests → build Docker → SSH sur le VPS
+              → git pull → docker compose up -d --build → vérification de /health
+```
+
+Les branches de travail et les pull requests sont testées mais jamais déployées. Les volumes
+Docker (modèles Ollama et base ChromaDB) sont conservés d'un déploiement à l'autre.
+
+### Préparation du VPS (une seule fois)
+
+Configuration conseillée : Ubuntu, **8 Go de RAM** minimum (LLM + embeddings sur processeur),
+4 vCPU, 30 Go de disque.
+
+1. **Installer Docker** ([documentation officielle](https://docs.docker.com/engine/install/ubuntu/))
+   et créer un utilisateur dédié au déploiement :
+   ```bash
+   sudo adduser deploy
+   sudo usermod -aG docker deploy
+   ```
+2. **Créer une clé SSH dédiée** (sur votre poste), installer la clé publique sur le VPS :
+   ```bash
+   ssh-keygen -t ed25519 -f deploy_key -N "" -C "github-actions-deploy"
+   ssh-copy-id -i deploy_key.pub deploy@IP_DU_VPS
+   ```
+3. **Cloner le projet et faire le premier lancement** (connecté en `deploy` sur le VPS) :
+   ```bash
+   git clone https://github.com/GuyMartial24/rgpd-crag-agent.git
+   cd rgpd-crag-agent
+   docker compose up -d --build   # premier lancement : téléchargement des modèles (~3 Go)
+   ```
+4. **Pare-feu** : n'ouvrir que SSH et l'interface web.
+   ```bash
+   sudo ufw allow 22 && sudo ufw allow 8080 && sudo ufw enable
+   ```
+   Ollama (11434) et l'API (8000) n'écoutent que sur `127.0.0.1` : ils ne sont pas
+   accessibles depuis Internet, l'interface web transmet les appels `/api/` à l'API.
+5. **Ajouter les secrets** dans GitHub (*Settings → Secrets and variables → Actions*) :
+
+   | Secret | Valeur |
+   |---|---|
+   | `VPS_HOST` | adresse IP publique du VPS |
+   | `VPS_USERNAME` | `deploy` |
+   | `VPS_SSH_KEY` | contenu du fichier `deploy_key` (clé **privée**) |
+   | `VPS_PORT` | `22` |
+   | `VPS_APP_DIR` | `/home/deploy/rgpd-crag-agent` |
+
+Pour une mise en ligne publique, ajouter ensuite un nom de domaine et HTTPS (par exemple avec
+un reverse proxy Caddy devant le port 8080) et restreindre `CORS_ORIGINS` aux sites autorisés.
 
 ## Corpus
 

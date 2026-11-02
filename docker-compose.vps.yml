@@ -1,0 +1,65 @@
+# =====================================================================
+# Ajustements pour le VPS de production
+#
+# Ce fichier complète docker-compose.yml : Docker Compose fusionne les
+# deux fichiers, celui-ci ayant la priorité. Utilisation :
+#
+#   docker compose -f docker-compose.yml -f docker-compose.vps.yml up -d
+#
+# ou, plus simplement, avec la ligne suivante dans un fichier .env
+# placé dans le dossier du projet sur le VPS :
+#
+#   COMPOSE_FILE=docker-compose.yml:docker-compose.vps.yml
+#
+# Différences avec le développement local :
+# - Ollama est déjà installé directement sur le serveur. On réutilise
+#   cet Ollama au lieu d'en lancer un second dans Docker (économie de
+#   RAM et de disque, les modèles déjà téléchargés sont réutilisés) ;
+# - modèles utilisés : qwen2.5:14b (déjà présent sur le VPS, très bon
+#   en français) et bge-m3 pour les embeddings (multilingue). Ils
+#   doivent être présents dans l'Ollama du VPS (« ollama list ») ;
+# - délai d'attente plus long : un modèle de 14 milliards de paramètres
+#   est plus lent à répondre.
+#
+# Les modèles restent modifiables sans toucher à ce fichier, avec
+# LLM_MODEL et EMBEDDING_MODEL dans le fichier .env du VPS.
+# ATTENTION : changer EMBEDDING_MODEL impose de reconstruire la base :
+#   docker compose run --rm ingest python -m src.ingest --reset
+# =====================================================================
+
+services:
+
+  # Les services Ollama de Docker sont désactivés : un service avec un
+  # profil n'est démarré que si ce profil est demandé explicitement, ce
+  # qui n'arrive jamais pour le profil « desactive ».
+  ollama:
+    profiles: ["desactive"]
+
+  ollama-pull:
+    profiles: ["desactive"]
+
+  ingest:
+    environment:
+      # « host.docker.internal » désigne le serveur qui héberge Docker,
+      # vu depuis l'intérieur d'un conteneur.
+      OLLAMA_BASE_URL: http://host.docker.internal:11434
+      LLM_MODEL: ${LLM_MODEL:-qwen2.5:14b}
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-bge-m3}
+      # Temps maximum (en secondes) accordé à chaque appel à Ollama.
+      REQUEST_TIMEOUT: "300"
+    extra_hosts:
+      # Sous Linux, ce nom n'existe pas par défaut : « host-gateway »
+      # demande à Docker de le faire pointer vers le serveur.
+      - "host.docker.internal:host-gateway"
+    # « !reset » efface les dépendances définies dans docker-compose.yml :
+    # l'ingestion n'attend plus « ollama-pull », qui est désactivé.
+    depends_on: !reset {}
+
+  api:
+    environment:
+      OLLAMA_BASE_URL: http://host.docker.internal:11434
+      LLM_MODEL: ${LLM_MODEL:-qwen2.5:14b}
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-bge-m3}
+      REQUEST_TIMEOUT: "300"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
