@@ -8,9 +8,13 @@
     5. enregistrer les morceaux et leurs vecteurs dans ChromaDB.
 
 Utilisation en ligne de commande :
-    python -m src.ingest                   # indexe les PDF
-    python -m src.ingest --reset           # vide la base puis réindexe
-    python -m src.ingest --skip-if-exists  # rien si la base est remplie
+    python -m src.ingest           # indexe uniquement les morceaux manquants
+    python -m src.ingest --reset   # vide la base puis réindexe tout
+
+L'ingestion est « reprenable » : seuls les morceaux absents de la base
+sont calculés. Si elle est interrompue, il suffit de la relancer pour
+qu'elle reprenne là où elle s'était arrêtée. Si la base est déjà
+complète, elle se termine en quelques secondes.
 """
 
 import argparse
@@ -343,11 +347,65 @@ def get_collection(settings: Settings, client=None):
 
     # embedding_function=None : les vecteurs sont calculés par Ollama et
     # non par ChromaDB. « cosine » : similarité cosinus entre vecteurs.
+    # On note aussi le modèle d'embedding utilisé : les vecteurs de deux
+    # modèles différents ne sont pas comparables entre eux. Ces
+    # informations ne sont enregistrées qu'à la création de la collection.
     return client.get_or_create_collection(
         name=settings.collection_name,
         embedding_function=None,
-        metadata={"hnsw:space": "cosine"},
+        metadata={
+            "hnsw:space": "cosine",
+            "embedding_model": settings.embedding_model,
+        },
     )
+
+
+def check_embedding_model(collection, settings: Settings):
+    """Vérifie que la base a été construite avec le modèle configuré.
+
+    Mélanger des vecteurs de deux modèles différents rendrait la
+    recherche incohérente (ou provoquerait une erreur de dimension) :
+    on s'arrête avec un message clair plutôt que de continuer.
+    """
+    metadata = collection.metadata
+    if metadata is None:
+        metadata = {}
+
+    stored_model = metadata.get("embedding_model")
+
+    # Base créée par une ancienne version du projet : le modèle n'avait
+    # pas été enregistré, on ne peut pas vérifier.
+    if stored_model is None:
+        logger.warning(
+            "Modèle d'embedding de la base inconnu (ancienne version) : "
+            "vérification impossible."
+        )
+        return
+
+    if stored_model != settings.embedding_model:
+        raise ValueError(
+            f"La base a été construite avec le modèle « {stored_model} » "
+            f"mais EMBEDDING_MODEL vaut « {settings.embedding_model} ». "
+            f"Reconstruisez la base avec : python -m src.ingest --reset"
+        )
+
+
+def find_missing_chunks(chunks: list[dict], collection) -> list[dict]:
+    """Retourne les morceaux qui ne sont pas encore dans la collection."""
+    all_ids = []
+    for chunk in chunks:
+        all_ids.append(chunk["id"])
+
+    # On demande à ChromaDB lesquels de ces identifiants il connaît déjà
+    # (include=[] : on ne récupère que les identifiants, pas les textes).
+    existing = collection.get(ids=all_ids, include=[])
+    existing_ids = set(existing["ids"])
+
+    missing_chunks = []
+    for chunk in chunks:
+        if chunk["id"] not in existing_ids:
+            missing_chunks.append(chunk)
+    return missing_chunks
 
 
 def index_chunks(chunks, collection, embedder, batch_size=32) -> int:
@@ -431,8 +489,12 @@ class ChromaRetriever:
 # ---------------------------------------------------------------------
 
 
-def ingest(settings=None, reset=False, skip_if_exists=False) -> int:
-    """Lance l'ingestion complète. Retourne le nombre de morceaux indexés."""
+def ingest(settings=None, reset=False) -> int:
+    """Lance l'ingestion. Retourne le nombre de morceaux indexés.
+
+    Seuls les morceaux absents de la base sont calculés : une ingestion
+    interrompue reprend là où elle s'était arrêtée.
+    """
     if settings is None:
         settings = get_settings()
 
@@ -451,22 +513,26 @@ def ingest(settings=None, reset=False, skip_if_exists=False) -> int:
             )
 
     collection = get_collection(settings, client)
+    check_embedding_model(collection, settings)
 
-    # Option --skip-if-exists : inutile de tout recalculer si la base est
-    # déjà remplie (utile au redémarrage des conteneurs Docker).
-    if skip_if_exists and collection.count() > 0:
+    chunks = build_chunks(settings)
+    missing_chunks = find_missing_chunks(chunks, collection)
+
+    # Base déjà complète (cas d'un simple redémarrage) : rien à calculer.
+    if len(missing_chunks) == 0:
         logger.info(
-            "Collection déjà alimentée (%d chunks) : ingestion ignorée",
-            collection.count(),
+            "Base déjà complète (%d chunks) : rien à indexer", len(chunks)
         )
         return 0
 
-    chunks = build_chunks(settings)
-    logger.info("%d chunks générés", len(chunks))
-
+    logger.info(
+        "%d chunks à indexer sur %d (les autres sont déjà dans la base)",
+        len(missing_chunks),
+        len(chunks),
+    )
     embedder = OllamaEmbedder(settings)
     return index_chunks(
-        chunks, collection, embedder, settings.embed_batch_size
+        missing_chunks, collection, embedder, settings.embed_batch_size
     )
 
 
@@ -480,11 +546,6 @@ def main():
         action="store_true",
         help="supprime puis reconstruit la collection",
     )
-    parser.add_argument(
-        "--skip-if-exists",
-        action="store_true",
-        help="ne fait rien si la collection est déjà remplie",
-    )
     args = parser.parse_args()
 
     logging.basicConfig(
@@ -492,7 +553,7 @@ def main():
         format="%(asctime)s %(levelname)s %(message)s",
     )
 
-    count = ingest(reset=args.reset, skip_if_exists=args.skip_if_exists)
+    count = ingest(reset=args.reset)
     logger.info("Ingestion terminée : %d chunks indexés", count)
 
 

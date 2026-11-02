@@ -86,9 +86,11 @@ services:
     # Image construite à partir du Dockerfile de ce dossier.
     build: .
     image: rgpd-crag-agent:latest
-    # --skip-if-exists : si la base est déjà remplie (redémarrage),
-    # l'ingestion ne recalcule rien.
-    command: ["python", "-m", "src.ingest", "--skip-if-exists"]
+    # L'ingestion ne calcule que les morceaux absents de la base : si
+    # elle est déjà complète (redémarrage), elle se termine en quelques
+    # secondes ; si elle avait été interrompue, elle reprend où elle en
+    # était.
+    command: ["python", "-m", "src.ingest"]
     environment:
       # Dans Docker, les services se joignent par leur nom : « ollama ».
       OLLAMA_BASE_URL: http://ollama:11434

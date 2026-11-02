@@ -13,8 +13,10 @@ import pytest
 from src.config import Settings
 from src.ingest import (
     ChromaRetriever,
+    check_embedding_model,
     chunk_sections,
     extract_pdf_text,
+    find_missing_chunks,
     get_collection,
     index_chunks,
     parse_regulation,
@@ -265,3 +267,60 @@ def test_reindexing_does_not_create_duplicates(indexed_collection):
     index_chunks(chunks, indexed_collection, FakeEmbedder())
 
     assert indexed_collection.count() == 6
+
+
+# ----- Ingestion reprenable -----
+
+
+def test_find_missing_chunks_resumes_interrupted_ingestion(collection):
+    chunks = chunk_sections(parse_regulation(SAMPLE_FR, "fr"), "fr", 1000, 0)
+
+    # Simulation d'une ingestion interrompue : seuls les 2 premiers
+    # morceaux (sur 4) ont été enregistrés.
+    index_chunks(chunks[:2], collection, FakeEmbedder())
+
+    missing = find_missing_chunks(chunks, collection)
+
+    # Seuls les 2 morceaux restants sont à calculer.
+    assert missing == chunks[2:]
+
+
+def test_find_missing_chunks_when_base_is_complete(indexed_collection):
+    chunks = chunk_sections(parse_regulation(SAMPLE_FR, "fr"), "fr", 1000, 0)
+
+    assert find_missing_chunks(chunks, indexed_collection) == []
+
+
+def test_find_missing_chunks_on_empty_base(collection):
+    chunks = chunk_sections(parse_regulation(SAMPLE_FR, "fr"), "fr", 1000, 0)
+
+    assert find_missing_chunks(chunks, collection) == chunks
+
+
+# ----- Vérification du modèle d'embedding -----
+
+
+def test_collection_remembers_embedding_model(collection):
+    assert collection.metadata["embedding_model"] == "bge-m3"
+
+
+def test_same_embedding_model_is_accepted(collection):
+    # Aucune erreur : la base a été créée avec le modèle configuré.
+    check_embedding_model(collection, Settings(embedding_model="bge-m3"))
+
+
+def test_different_embedding_model_is_refused(collection):
+    with pytest.raises(ValueError, match="--reset"):
+        check_embedding_model(
+            collection, Settings(embedding_model="nomic-embed-text")
+        )
+
+
+def test_old_base_without_model_is_accepted(tmp_path):
+    # Base créée par une ancienne version, sans le nom du modèle.
+    client = chromadb.PersistentClient(path=str(tmp_path / "ancienne"))
+    old_collection = client.create_collection(
+        name="rgpd", metadata={"hnsw:space": "cosine"}
+    )
+
+    check_embedding_model(old_collection, Settings())
