@@ -152,6 +152,8 @@ jobs:
     # avec l'historique des déploiements. On peut y ajouter une
     # validation manuelle avant chaque déploiement si besoin.
     environment: production
+    # Durée maximale du job (voir command_timeout ci-dessous).
+    timeout-minutes: 130
     steps:
       - name: Mise à jour du VPS via SSH
         uses: appleboy/ssh-action@v1.0.3
@@ -160,9 +162,13 @@ jobs:
           username: ${{ secrets.VPS_USERNAME }}
           key: ${{ secrets.VPS_SSH_KEY }}
           port: ${{ secrets.VPS_PORT }}
-          # La reconstruction des images peut être longue : on laisse
-          # 30 minutes au lieu des 10 par défaut.
-          command_timeout: 30m
+          # Durée maximale des commandes sur le VPS (10 minutes par
+          # défaut). Un déploiement habituel prend quelques minutes, mais
+          # le tout premier sur un serveur vierge doit indexer le RGPD,
+          # ce qui peut dépasser une heure sur processeur. Si ce délai
+          # est malgré tout dépassé, le déploiement suivant reprend
+          # l'indexation là où elle s'était arrêtée.
+          command_timeout: 120m
           script: |
             # Arrête le script à la première commande en erreur.
             set -e
@@ -181,7 +187,13 @@ jobs:
             # 2. Reconstruction et redémarrage. Pas de « docker compose
             #    down » : seuls les conteneurs modifiés sont recréés, et
             #    le volume de la base ChromaDB est conservé.
-            docker compose up -d --build --remove-orphans
+            #    En cas d'échec (par exemple de l'ingestion), on affiche
+            #    les derniers logs pour comprendre le problème.
+            if ! docker compose up -d --build --remove-orphans; then
+              echo "Échec du démarrage des conteneurs. Derniers logs :"
+              docker compose logs --tail=50 ingest api
+              exit 1
+            fi
 
             # 3. Suppression des anciennes images pour libérer le disque.
             docker image prune -f
