@@ -1,0 +1,18 @@
+# Configuration des outils de qualité du projet.
+
+[tool.ruff]
+# PEP 8 recommande des lignes de 79 caractères maximum.
+line-length = 79
+target-version = "py312"
+
+[tool.ruff.lint]
+# E / W : règles de style PEP 8 (pycodestyle)
+# F     : erreurs simples (imports inutilisés, variables non définies...)
+# I     : ordre des imports (PEP 8)
+# N     : conventions de nommage PEP 8
+# B     : pièges courants (bugbear)
+# UP    : syntaxe moderne de Python
+select = ["E", "W", "F", "I", "N", "B", "UP"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
