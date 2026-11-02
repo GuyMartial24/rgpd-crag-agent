@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Assistant RGPD</title>
+    <link rel="stylesheet" href="page.css">
+</head>
+<body>
+    <!--
+        Page de démonstration : elle représente un site web quelconque
+        sur lequel le chatbot est intégré. Le chatbot lui-même est
+        entièrement dans widget.js (voir la balise <script> en bas).
+    -->
+    <main class="container">
+
+        <header>
+            <h1>Assistant RGPD</h1>
+            <p class="subtitle">
+                Un agent Corrective RAG qui répond aux questions sur le
+                Règlement général sur la protection des données, à partir
+                du texte officiel en français et en anglais.
+            </p>
+        </header>
+
+        <section class="card">
+            <h2>Essayez-le</h2>
+            <p>
+                Cliquez sur la bulle en bas à droite de la page et posez
+                votre question. Par exemple :
+            </p>
+            <ul>
+                <li>Dans quel délai faut-il notifier une violation de données ?</li>
+                <li>Quelles sont les bases légales d'un traitement ?</li>
+                <li>Quand une analyse d'impact est-elle obligatoire ?</li>
+            </ul>
+        </section>
+
+        <section class="card">
+            <h2>Comment ça marche ?</h2>
+            <ol>
+                <li>L'agent cherche les extraits du RGPD les plus proches de la question.</li>
+                <li>Le modèle de langage vérifie que chaque extrait est pertinent.</li>
+                <li>Si aucun ne l'est, la question est reformulée et la recherche relancée.</li>
+                <li>La réponse est rédigée uniquement à partir des extraits retenus, avec les articles cités.</li>
+            </ol>
+        </section>
+
+        <section class="card">
+            <h2>Intégrer le chatbot sur un autre site</h2>
+            <p>Ajoutez simplement cette ligne avant la balise <code>&lt;/body&gt;</code> :</p>
+            <pre><code>&lt;script src="http://localhost:8080/widget.js"&gt;&lt;/script&gt;</code></pre>
+            <p>Options facultatives :</p>
+            <pre><code>&lt;script src="http://localhost:8080/widget.js"
+        data-language="en"
+        data-title="GDPR Assistant"&gt;&lt;/script&gt;</code></pre>
+        </section>
+
+        <footer class="footer">
+            Aide à la lecture du RGPD, ne constitue pas un conseil juridique.
+        </footer>
+    </main>
+
+    <!-- Le chatbot : une seule ligne suffit pour l'ajouter à une page. -->
+    <script src="widget.js"></script>
+</body>
+</html>

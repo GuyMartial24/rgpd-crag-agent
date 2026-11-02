@@ -15,9 +15,14 @@ si aucun n'est pertinent la requête est **reformulée** avec le vocabulaire du 
 une nouvelle recherche. Après un nombre limité d'essais, l'agent préfère reconnaître qu'il ne
 sait pas plutôt que d'halluciner.
 
+L'agent a aussi une **mémoire de conversation** : une question de relance (« et pour les
+mineurs ? ») est d'abord réécrite en question autonome à partir des échanges précédents,
+pour que la recherche dans le RGPD reste pertinente.
+
 ```mermaid
 flowchart LR
-    S([Question]) --> R[retrieve<br/>ChromaDB]
+    S([Question + historique]) --> C[contextualize<br/>question autonome]
+    C --> R[retrieve<br/>ChromaDB]
     R --> G{grade_documents<br/>LLM évaluateur}
     G -- extraits pertinents --> GEN[generate<br/>réponse sourcée]
     G -- aucun, essais restants --> T[transform_query<br/>reformulation]
@@ -40,11 +45,18 @@ rgpd-crag-agent/
 │   ├── ingest.py              # Extraction PDF, découpage par article, indexation ChromaDB
 │   ├── graph.py               # Nœuds et flux de décision LangGraph (CRAG)
 │   └── main.py                # API REST FastAPI
+├── frontend/
+│   ├── widget.js              # Chatbot flottant, intégrable sur n'importe quel site
+│   ├── index.html             # Page de démonstration intégrant le chatbot
+│   ├── page.css
+│   ├── nginx.conf             # Sert les fichiers et transmet /api/ au backend
+│   └── Dockerfile
 ├── tests/
 │   ├── test_ingest.py         # Extraction des PDF, chunking et accès ChromaDB
 │   └── test_agent.py          # Graphe CRAG, API et évaluation de bout en bout
-├── Dockerfile
-├── docker-compose.yml         # ollama → téléchargement des modèles → ingestion → api
+├── Dockerfile                 # Image de l'API
+├── docker-compose.yml         # ollama → modèles → ingestion → api → frontend
+├── pyproject.toml             # Configuration de ruff (PEP 8) et pytest
 └── requirements.txt
 ```
 
@@ -55,8 +67,27 @@ docker compose up -d --build
 ```
 
 Au premier lancement, les modèles Ollama sont téléchargés (`llama3.2:3b` et `bge-m3`, ~3 Go)
-puis les deux PDF sont indexés. L'API est ensuite disponible sur http://localhost:8000
-(documentation interactive : http://localhost:8000/docs).
+puis les deux PDF sont indexés. Ensuite :
+
+- **page de démonstration avec le chatbot** : http://localhost:8080 (bulle en bas à droite)
+- **API** : http://localhost:8000 (documentation interactive : http://localhost:8000/docs)
+
+### Intégrer le chatbot sur un site
+
+Le chatbot est un widget autonome ([frontend/widget.js](frontend/widget.js)) : une bulle
+flottante qui ouvre une fenêtre de discussion. Pour l'ajouter à n'importe quelle page,
+une ligne suffit avant `</body>` :
+
+```html
+<script src="http://localhost:8080/widget.js"></script>
+```
+
+Options facultatives : `data-language="en"` (langue par défaut), `data-title="..."` (titre
+de la fenêtre), `data-api-url="..."` (adresse de l'API, par défaut celle du serveur qui
+fournit `widget.js`). Les styles du widget sont isolés dans un Shadow DOM : ils
+n'interfèrent pas avec ceux du site hôte.
+
+Les sites autorisés à appeler l'API se règlent avec `CORS_ORIGINS` (tous par défaut).
 
 ```bash
 curl -X POST http://localhost:8000/ask \
@@ -68,6 +99,7 @@ curl -X POST http://localhost:8000/ask \
 {
   "answer": "Le responsable du traitement doit notifier la violation à l'autorité de contrôle dans les meilleurs délais et, si possible, 72 heures au plus tard après en avoir pris connaissance (Article 33)...",
   "sources": ["Article 33", "Article 34"],
+  "standalone_question": "Dans quel délai faut-il notifier une violation de données ?",
   "search_query": "Dans quel délai faut-il notifier une violation de données ?",
   "rewrites": 0
 }
@@ -75,6 +107,28 @@ curl -X POST http://localhost:8000/ask \
 
 Le champ `language` (`fr` par défaut, ou `en`) choisit la version du règlement interrogée et
 la langue de la réponse.
+
+### Mémoire de conversation
+
+L'API ne stocke rien : le client renvoie les échanges précédents dans `history` (20 au
+maximum, l'agent utilise les `MAX_HISTORY` plus récents). La réponse indique dans
+`standalone_question` comment la relance a été comprise :
+
+```bash
+curl -X POST http://localhost:8000/ask \
+  -H "Content-Type: application/json" \
+  -d '{
+    "question": "Et à qui faut-il la signaler ?",
+    "history": [
+      {"question": "Dans quel délai notifier une violation de données ?",
+       "answer": "72 heures au plus tard après en avoir pris connaissance (Article 33)."}
+    ]
+  }'
+```
+
+Le widget gère cet historique automatiquement et le conserve dans le `sessionStorage` du
+navigateur : la conversation continue quand le visiteur change de page, et le bouton ↺
+démarre une nouvelle conversation.
 
 ## Développement local
 
@@ -109,6 +163,8 @@ d'environnement ou fichier `.env` :
 | `CHUNK_SIZE` / `CHUNK_OVERLAP` | `1000` / `150` | Découpage des articles |
 | `TOP_K` | `4` | Nombre d'extraits récupérés |
 | `MAX_REWRITES` | `2` | Reformulations maximales avant abandon |
+| `MAX_HISTORY` | `6` | Échanges passés pris en compte (mémoire de conversation) |
+| `CORS_ORIGINS` | `["*"]` | Sites autorisés à appeler l'API (JSON), ex. `["https://mon-site.fr"]` |
 
 ## Qualité du code
 

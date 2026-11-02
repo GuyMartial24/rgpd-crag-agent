@@ -13,7 +13,12 @@ import os
 import pytest
 from fastapi.testclient import TestClient
 
-from src.graph import FALLBACK_ANSWERS, CragAgent, parse_grade
+from src.graph import (
+    FALLBACK_ANSWERS,
+    CragAgent,
+    format_history,
+    parse_grade,
+)
 from src.main import app, get_agent
 
 # Deux extraits utilisés dans les tests.
@@ -30,22 +35,40 @@ ARTICLE_1 = {
 
 QUESTION = "Combien de temps pour signaler une fuite de données ?"
 
+# Conversation utilisée pour tester la mémoire : la relance « Et à qui ? »
+# n'a de sens qu'avec l'échange précédent.
+HISTORY = [
+    {"question": QUESTION, "answer": "Sous 72 heures (Article 33)."},
+]
+FOLLOW_UP = "Et à qui faut-il la signaler ?"
+STANDALONE_QUESTION = "À qui faut-il notifier une violation de données ?"
+
 
 class FakeLLM:
     """Faux LLM qui répond selon le type de prompt reçu.
 
+    - contextualisation : renvoie une question autonome fixe ;
     - évaluation : un extrait est pertinent s'il contient « 72 heures » ;
     - reformulation : renvoie toujours la même requête ;
     - génération : renvoie une réponse fixe.
     Tous les prompts reçus sont gardés dans self.prompts.
     """
 
-    def __init__(self, rewrite="délai de notification d'une violation"):
+    def __init__(
+        self,
+        rewrite="délai de notification d'une violation",
+        standalone=STANDALONE_QUESTION,
+    ):
         self.rewrite = rewrite
+        self.standalone = standalone
         self.prompts = []
 
     def invoke(self, prompt, json_mode=False):
         self.prompts.append(prompt)
+
+        # Prompt de contextualisation (question de relance).
+        if prompt.startswith("Voici une conversation"):
+            return f"« {self.standalone} »"
 
         # Prompt d'évaluation (le seul envoyé en mode JSON).
         if json_mode:
@@ -169,6 +192,80 @@ def test_fallback_answer_follows_language():
     assert result["answer"] == FALLBACK_ANSWERS["en"]
 
 
+# ----- Mémoire de conversation -----
+
+
+def test_first_question_skips_contextualization():
+    llm = FakeLLM()
+    retriever = FakeRetriever({}, default=[ARTICLE_33])
+    agent = CragAgent(retriever, llm)
+
+    result = agent.ask(QUESTION)
+
+    # Sans historique, la question est utilisée telle quelle et le LLM
+    # n'est pas appelé pour la réécrire.
+    assert result["standalone_question"] == QUESTION
+    for prompt in llm.prompts:
+        assert not prompt.startswith("Voici une conversation")
+
+
+def test_follow_up_question_is_rewritten_with_history():
+    llm = FakeLLM()
+    retriever = FakeRetriever({}, default=[ARTICLE_33])
+    agent = CragAgent(retriever, llm)
+
+    result = agent.ask(FOLLOW_UP, history=HISTORY)
+
+    # Le LLM a reçu l'historique et la relance.
+    contextualize_prompt = llm.prompts[0]
+    assert "Utilisateur : " + QUESTION in contextualize_prompt
+    assert "Nouvelle question : " + FOLLOW_UP in contextualize_prompt
+    # La recherche utilise la question réécrite (guillemets retirés).
+    assert result["standalone_question"] == STANDALONE_QUESTION
+    assert retriever.queries == [STANDALONE_QUESTION]
+
+
+def test_generation_prompt_contains_history():
+    llm = FakeLLM()
+    agent = CragAgent(FakeRetriever({}, default=[ARTICLE_33]), llm)
+
+    agent.ask(FOLLOW_UP, history=HISTORY)
+
+    generation_prompt = llm.prompts[-1]
+    assert "Conversation précédente" in generation_prompt
+    assert "Assistant : Sous 72 heures (Article 33)." in generation_prompt
+
+
+def test_only_recent_history_is_used():
+    llm = FakeLLM()
+    agent = CragAgent(
+        FakeRetriever({}, default=[ARTICLE_33]), llm, max_history=2
+    )
+    history = []
+    for number in range(1, 6):
+        history.append(
+            {"question": f"Question {number}", "answer": f"Réponse {number}"}
+        )
+
+    agent.ask(FOLLOW_UP, history=history)
+
+    # Seuls les 2 derniers échanges (4 et 5) sont envoyés au LLM.
+    contextualize_prompt = llm.prompts[0]
+    assert "Question 3" not in contextualize_prompt
+    assert "Question 4" in contextualize_prompt
+    assert "Question 5" in contextualize_prompt
+
+
+def test_long_answers_are_truncated_in_history():
+    history = [{"question": "Q", "answer": "a" * 2000}]
+
+    text = format_history(history)
+
+    # 500 caractères conservés, suivis de « … ».
+    assert "a" * 500 + "…" in text
+    assert "a" * 501 not in text
+
+
 # ----- Lecture de la réponse de l'évaluateur -----
 
 
@@ -212,6 +309,22 @@ def test_health(client):
     assert response.json()["status"] == "ok"
 
 
+def test_cors_allows_widget_on_another_site(client):
+    # Avant un POST depuis un autre site, le navigateur envoie une
+    # requête OPTIONS (« preflight ») pour demander l'autorisation.
+    response = client.options(
+        "/ask",
+        headers={
+            "Origin": "https://site-client.example",
+            "Access-Control-Request-Method": "POST",
+            "Access-Control-Request-Headers": "Content-Type",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.headers["access-control-allow-origin"] == "*"
+
+
 def test_ask_endpoint(client):
     retriever = FakeRetriever({}, default=[ARTICLE_33])
     use_fake_agent(CragAgent(retriever, FakeLLM()))
@@ -222,9 +335,37 @@ def test_ask_endpoint(client):
     assert response.json() == {
         "answer": "Sous 72 heures (Article 33).",
         "sources": ["Article 33"],
+        "standalone_question": QUESTION,
         "search_query": QUESTION,
         "rewrites": 0,
     }
+
+
+def test_ask_endpoint_with_history(client):
+    retriever = FakeRetriever({}, default=[ARTICLE_33])
+    use_fake_agent(CragAgent(retriever, FakeLLM()))
+
+    response = client.post(
+        "/ask", json={"question": FOLLOW_UP, "history": HISTORY}
+    )
+
+    assert response.status_code == 200
+    assert response.json()["standalone_question"] == STANDALONE_QUESTION
+
+
+def test_ask_rejects_too_long_history(client):
+    use_fake_agent(None)
+    history = []
+    # « _ » : nom conventionnel d'une variable que l'on n'utilise pas.
+    for _ in range(21):
+        history.append({"question": "Q", "answer": "R"})
+
+    response = client.post(
+        "/ask", json={"question": QUESTION, "history": history}
+    )
+
+    # 20 échanges maximum par requête.
+    assert response.status_code == 422
 
 
 def test_ask_rejects_invalid_requests(client):

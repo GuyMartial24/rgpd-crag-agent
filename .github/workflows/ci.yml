@@ -4,7 +4,8 @@
 # À chaque push, trois étapes s'exécutent l'une après l'autre :
 #   1. lint   : vérifie le style du code (PEP 8) avec ruff
 #   2. test   : lance les tests automatiques avec pytest
-#   3. docker : vérifie que l'image Docker se construit
+#   3. docker : vérifie que les images Docker (API et interface web)
+#               se construisent
 # Si une étape échoue, les suivantes ne sont pas lancées.
 # =====================================================================
 
@@ -96,7 +97,7 @@ jobs:
       # Buildx : outil de construction d'images Docker avec cache.
       - uses: docker/setup-buildx-action@v3
 
-      - name: Construction de l'image
+      - name: Construction de l'image de l'API
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -105,5 +106,15 @@ jobs:
           push: false
           tags: rgpd-crag-agent:${{ github.sha }}
           # Réutilise les couches Docker des exécutions précédentes.
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          # « scope » sépare le cache de chaque image.
+          cache-from: type=gha,scope=api
+          cache-to: type=gha,mode=max,scope=api
+
+      - name: Construction de l'image de l'interface web
+        uses: docker/build-push-action@v6
+        with:
+          context: ./frontend
+          push: false
+          tags: rgpd-crag-agent-frontend:${{ github.sha }}
+          cache-from: type=gha,scope=frontend
+          cache-to: type=gha,mode=max,scope=frontend

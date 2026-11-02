@@ -11,9 +11,10 @@
 #   2. ollama-pull : télécharge les modèles, puis s'arrête
 #   3. ingest      : indexe les PDF du RGPD dans ChromaDB, puis s'arrête
 #   4. api         : l'API FastAPI, accessible sur http://localhost:8000
+#   5. frontend    : l'interface web, accessible sur http://localhost:8080
 #
 # Valeurs modifiables dans un fichier .env placé à côté de ce fichier :
-#   LLM_MODEL, EMBEDDING_MODEL, OLLAMA_VERSION, API_PORT
+#   LLM_MODEL, EMBEDDING_MODEL, OLLAMA_VERSION, API_PORT, FRONTEND_PORT
 # La syntaxe ${VARIABLE:-defaut} utilise « defaut » si la variable
 # n'est pas définie.
 # =====================================================================
@@ -121,6 +122,23 @@ services:
         # L'API démarre seulement quand l'ingestion s'est bien terminée.
         condition: service_completed_successfully
     # En cas de plantage, Docker relance automatiquement l'API.
+    restart: unless-stopped
+
+  # -------------------------------------------------------------------
+  # 5. Interface web (nginx), accessible sur http://localhost:8080
+  # -------------------------------------------------------------------
+  frontend:
+    # Image construite à partir de frontend/Dockerfile.
+    build: ./frontend
+    image: rgpd-crag-agent-frontend:latest
+    ports:
+      # Port de la machine (8080 par défaut) : port du conteneur
+      - "${FRONTEND_PORT:-8080}:80"
+    depends_on:
+      api:
+        # nginx doit pouvoir joindre l'API dès son démarrage : on attend
+        # que son contrôle de santé (défini dans le Dockerfile) réussisse.
+        condition: service_healthy
     restart: unless-stopped
 
 # ---------------------------------------------------------------------

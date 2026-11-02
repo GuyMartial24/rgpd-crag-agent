@@ -63,6 +63,16 @@ class Settings(BaseSettings):
     top_k: int = 4
     # Nombre maximum de reformulations de la question avant d'abandonner.
     max_rewrites: int = 2
+    # Nombre maximum d'échanges passés (question + réponse) pris en
+    # compte pour la mémoire de conversation.
+    max_history: int = 6
+
+    # ----- API -----
+    # Sites autorisés à appeler l'API depuis le navigateur (CORS), par
+    # exemple quand le widget de chat est intégré sur un autre site.
+    # « * » autorise tous les sites. En production, on indique plutôt
+    # la liste précise, ex. : CORS_ORIGINS='["https://mon-site.fr"]'
+    cors_origins: list[str] = ["*"]
 
 
 # On garde une seule instance des paramètres pour toute l'application.

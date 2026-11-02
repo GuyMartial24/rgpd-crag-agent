@@ -3,6 +3,11 @@
 Un RAG classique répond à partir des extraits trouvés, même s'ils ne
 parlent pas du sujet. Le CRAG ajoute une étape de vérification :
 
+    0. contextualize   : si une conversation est en cours, la question
+                         est réécrite pour être compréhensible seule
+                         (ex. « et pour les mineurs ? » devient « Quelles
+                         sont les conditions du consentement pour les
+                         mineurs ? ») ;
     1. retrieve        : on cherche des extraits du RGPD dans ChromaDB ;
     2. grade_documents : le LLM juge si chaque extrait est pertinent ;
     3. ensuite, trois cas possibles :
@@ -11,6 +16,9 @@ parlent pas du sujet. Le CRAG ajoute une étape de vérification :
          reformule la question, puis on retourne à l'étape 1) ;
        - aucun, et plus d'essais         -> fallback (on avoue ne pas
          savoir plutôt que d'inventer une réponse).
+
+Mémoire de conversation : l'API ne stocke rien. C'est le client (le
+widget de chat) qui renvoie l'historique des échanges à chaque question.
 """
 
 import json
@@ -28,6 +36,20 @@ from src.config import Settings, get_settings
 # Le « \ » en fin de ligne colle la ligne suivante (pas de retour à la
 # ligne dans le texte) : il permet de respecter 79 caractères par ligne.
 # ---------------------------------------------------------------------
+
+CONTEXTUALIZE_PROMPT = """Voici une conversation sur le RGPD, suivie \
+d'une nouvelle question de l'utilisateur.
+
+Conversation :
+{history}
+
+Nouvelle question : {question}
+
+Si la nouvelle question fait référence à la conversation (pronom, sujet \
+sous-entendu, « et pour... », « pourquoi ? »...), réécris-la en une \
+question complète et compréhensible seule, en {language_name}. Sinon, \
+renvoie-la telle quelle.
+Réponds uniquement par la question, sans commentaire."""
 
 GRADE_PROMPT = """Tu évalues si un extrait du RGPD aide à répondre à une \
 question.
@@ -59,13 +81,20 @@ général sur la protection des données (RGPD). Réponds en {language_name} \
 à la question en t'appuyant uniquement sur les extraits ci-dessous et \
 cite les articles ou considérants utilisés. Si les extraits ne \
 permettent pas de répondre complètement, indique-le.
-
+{history_block}
 Extraits :
 {context}
 
 Question : {question}
 
 Réponse :"""
+
+# Bloc ajouté au prompt de génération quand une conversation est en
+# cours, pour que la réponse reste cohérente avec les échanges passés.
+HISTORY_BLOCK = """
+Conversation précédente (pour le contexte uniquement) :
+{history}
+"""
 
 # Nom de chaque langue, inséré dans les prompts.
 LANGUAGE_NAMES = {"fr": "français", "en": "anglais"}
@@ -84,6 +113,10 @@ FALLBACK_ANSWERS = {
     ),
 }
 
+# Longueur maximale (en caractères) d'une réponse passée recopiée dans
+# les prompts : l'historique reste court et le LLM reste rapide.
+MAX_ANSWER_LENGTH_IN_HISTORY = 500
+
 
 class AgentState(TypedDict, total=False):
     """Données partagées entre les étapes du graphe.
@@ -95,6 +128,8 @@ class AgentState(TypedDict, total=False):
 
     question: str  # question posée par l'utilisateur
     language: str  # « fr » ou « en »
+    history: list[dict]  # échanges précédents {"question", "answer"}
+    standalone_question: str  # question compréhensible sans l'historique
     search_query: str  # requête utilisée pour la recherche
     documents: list[dict]  # extraits trouvés par la recherche
     relevant_documents: list[dict]  # extraits jugés pertinents
@@ -180,6 +215,22 @@ def format_context(documents: list[dict]) -> str:
     return "\n\n".join(parts)
 
 
+def format_history(history: list[dict]) -> str:
+    """Transforme l'historique en texte lisible pour le LLM.
+
+    Les réponses trop longues sont tronquées pour garder un prompt court.
+    """
+    lines = []
+    for exchange in history:
+        answer = exchange["answer"]
+        if len(answer) > MAX_ANSWER_LENGTH_IN_HISTORY:
+            answer = answer[:MAX_ANSWER_LENGTH_IN_HISTORY] + "…"
+
+        lines.append("Utilisateur : " + exchange["question"])
+        lines.append("Assistant : " + answer)
+    return "\n".join(lines)
+
+
 class CragAgent:
     """Agent CRAG : recherche, vérification, reformulation et réponse.
 
@@ -188,13 +239,15 @@ class CragAgent:
         llm          : objet ayant une méthode invoke(prompt, json_mode)
         top_k        : nombre d'extraits récupérés par recherche
         max_rewrites : nombre maximum de reformulations
+        max_history  : nombre maximum d'échanges passés pris en compte
     """
 
-    def __init__(self, retriever, llm, top_k=4, max_rewrites=2):
+    def __init__(self, retriever, llm, top_k=4, max_rewrites=2, max_history=6):
         self.retriever = retriever
         self.llm = llm
         self.top_k = top_k
         self.max_rewrites = max_rewrites
+        self.max_history = max_history
         self.graph = self.build_graph()
 
     def build_graph(self):
@@ -202,6 +255,7 @@ class CragAgent:
         workflow = StateGraph(AgentState)
 
         # Chaque nœud est une étape de l'agent.
+        workflow.add_node("contextualize", self.contextualize)
         workflow.add_node("retrieve", self.retrieve)
         workflow.add_node("grade_documents", self.grade_documents)
         workflow.add_node("transform_query", self.transform_query)
@@ -209,7 +263,8 @@ class CragAgent:
         workflow.add_node("fallback", self.fallback)
 
         # Les arêtes indiquent l'ordre des étapes.
-        workflow.add_edge(START, "retrieve")
+        workflow.add_edge(START, "contextualize")
+        workflow.add_edge("contextualize", "retrieve")
         workflow.add_edge("retrieve", "grade_documents")
 
         # Après l'évaluation, decide_next_step choisit l'étape suivante.
@@ -232,13 +287,36 @@ class CragAgent:
 
     # ----- Étapes du graphe -----
 
+    def contextualize(self, state: AgentState) -> dict:
+        """Étape 0 : rend la question compréhensible sans l'historique."""
+        history = state.get("history", [])
+
+        # Première question de la conversation : rien à faire, et on
+        # économise un appel au LLM.
+        if len(history) == 0:
+            return {"standalone_question": state["question"]}
+
+        prompt = CONTEXTUALIZE_PROMPT.format(
+            history=format_history(history),
+            question=state["question"],
+            language_name=LANGUAGE_NAMES[state["language"]],
+        )
+        standalone_question = self.llm.invoke(prompt)
+        standalone_question = standalone_question.strip().strip("\"'« »")
+
+        # Si le LLM ne renvoie rien, on garde la question d'origine.
+        if standalone_question == "":
+            standalone_question = state["question"]
+
+        return {"standalone_question": standalone_question}
+
     def retrieve(self, state: AgentState) -> dict:
         """Étape 1 : cherche des extraits du RGPD."""
-        # Au premier passage, on cherche avec la question de
-        # l'utilisateur. Ensuite, avec la question reformulée.
+        # Au premier passage, on cherche avec la question autonome.
+        # Après une reformulation, avec la requête reformulée.
         query = state.get("search_query")
         if not query:
-            query = state["question"]
+            query = state["standalone_question"]
 
         documents = self.retriever.search(query, self.top_k, state["language"])
         return {"search_query": query, "documents": documents}
@@ -249,7 +327,7 @@ class CragAgent:
 
         for document in state["documents"]:
             prompt = GRADE_PROMPT.format(
-                question=state["question"],
+                question=state["standalone_question"],
                 document=document["text"],
             )
             llm_answer = self.llm.invoke(prompt, json_mode=True)
@@ -272,7 +350,7 @@ class CragAgent:
     def transform_query(self, state: AgentState) -> dict:
         """Étape 3a : demande au LLM de reformuler la requête."""
         prompt = REWRITE_PROMPT.format(
-            question=state["question"],
+            question=state["standalone_question"],
             query=state["search_query"],
             language_name=LANGUAGE_NAMES[state["language"]],
         )
@@ -292,10 +370,19 @@ class CragAgent:
 
     def generate(self, state: AgentState) -> dict:
         """Étape 3b : rédige la réponse à partir des extraits pertinents."""
+        history = state.get("history", [])
+        if len(history) > 0:
+            history_block = HISTORY_BLOCK.format(
+                history=format_history(history)
+            )
+        else:
+            history_block = ""
+
         prompt = GENERATE_PROMPT.format(
             context=format_context(state["relevant_documents"]),
-            question=state["question"],
+            question=state["standalone_question"],
             language_name=LANGUAGE_NAMES[state["language"]],
+            history_block=history_block,
         )
         answer = self.llm.invoke(prompt)
         return {"answer": answer.strip()}
@@ -306,18 +393,35 @@ class CragAgent:
 
     # ----- Utilisation de l'agent -----
 
-    def ask(self, question: str, language: str = "fr") -> dict:
+    def ask(self, question: str, language: str = "fr", history=None) -> dict:
         """Pose une question à l'agent et retourne sa réponse.
 
+        Paramètres :
+            question : la nouvelle question
+            language : « fr » ou « en »
+            history  : échanges précédents de la conversation, sous la
+                       forme [{"question": "...", "answer": "..."}, ...]
+                       (du plus ancien au plus récent)
+
         Le dictionnaire retourné contient :
-            answer       : la réponse rédigée
-            sources      : les articles/considérants utilisés
-            search_query : la dernière requête de recherche
-            rewrites     : le nombre de reformulations effectuées
+            answer              : la réponse rédigée
+            sources             : les articles/considérants utilisés
+            standalone_question : la question réécrite avec le contexte
+            search_query        : la dernière requête de recherche
+            rewrites            : le nombre de reformulations effectuées
         """
+        if history is None:
+            history = []
+
+        # On ne garde que les échanges les plus récents : au-delà, le
+        # prompt devient long et le LLM plus lent.
+        if len(history) > self.max_history:
+            history = history[-self.max_history :]
+
         initial_state = {
             "question": question,
             "language": language,
+            "history": history,
             "rewrites": 0,
         }
         final_state = self.graph.invoke(initial_state)
@@ -331,6 +435,7 @@ class CragAgent:
         return {
             "answer": final_state["answer"],
             "sources": sources,
+            "standalone_question": final_state["standalone_question"],
             "search_query": final_state["search_query"],
             "rewrites": final_state.get("rewrites", 0),
         }
@@ -349,4 +454,10 @@ def create_default_agent(settings=None) -> CragAgent:
         get_collection(settings), OllamaEmbedder(settings)
     )
     llm = OllamaLLM(settings)
-    return CragAgent(retriever, llm, settings.top_k, settings.max_rewrites)
+    return CragAgent(
+        retriever,
+        llm,
+        settings.top_k,
+        settings.max_rewrites,
+        settings.max_history,
+    )
