@@ -1,0 +1,205 @@
+# =====================================================================
+# Intégration et déploiement continus (CI/CD) avec GitHub Actions
+#
+# À chaque push, les étapes s'exécutent l'une après l'autre :
+#   1. lint   : vérifie le style du code (PEP 8) avec ruff
+#   2. test   : lance les tests automatiques avec pytest
+#   3. docker : vérifie que les images Docker (API et interface web)
+#               se construisent
+#   4. deploy : met à jour le VPS, UNIQUEMENT pour un push sur main
+#               (c'est-à-dire après la fusion d'une pull request)
+# Si une étape échoue, les suivantes ne sont pas lancées : un code qui
+# ne passe pas les tests n'est jamais déployé.
+# =====================================================================
+
+name: CI/CD
+
+# Événements qui déclenchent la CI.
+on:
+  # Push sur n'importe quelle branche : main, mais aussi les branches
+  # de travail (ex. feature/crag-pipeline). « ** » accepte les noms
+  # contenant un « / ».
+  push:
+    branches: ["**"]
+  # Pull request vers main : vérifie le code avant la fusion.
+  pull_request:
+    branches: [main]
+  # Permet aussi de lancer la CI à la main depuis l'onglet « Actions ».
+  workflow_dispatch:
+
+# Si l'on pousse deux fois de suite sur la même branche, l'exécution
+# précédente (devenue inutile) est annulée. Exception : sur main, on
+# n'interrompt jamais un déploiement en cours ; l'exécution suivante
+# attend simplement qu'il se termine.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+jobs:
+  # -------------------------------------------------------------------
+  # 1. Lint : style et qualité du code
+  # -------------------------------------------------------------------
+  lint:
+    name: Lint (ruff)
+    runs-on: ubuntu-latest
+    steps:
+      # Récupère le code du dépôt.
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # On installe la même version de ruff que celle de
+      # requirements.txt, pour avoir les mêmes résultats qu'en local.
+      - name: Installation de ruff
+        run: pip install "$(grep '^ruff==' requirements.txt)"
+
+      # ruff lit sa configuration (PEP 8, 79 caractères) dans
+      # pyproject.toml.
+      - name: Vérification du style (ruff check)
+        run: ruff check src tests
+
+      - name: Vérification du formatage (ruff format)
+        run: ruff format --check src tests
+
+  # -------------------------------------------------------------------
+  # 2. Tests automatiques
+  # -------------------------------------------------------------------
+  test:
+    name: Tests (pytest)
+    runs-on: ubuntu-latest
+    # Ne démarre que si le lint a réussi.
+    needs: lint
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          # Garde les paquets téléchargés en cache entre deux exécutions.
+          cache: pip
+
+      - name: Installation des dépendances
+        run: pip install -r requirements.txt
+
+      # Les tests de bout en bout qui ont besoin d'Ollama sont ignorés
+      # automatiquement (la variable RUN_OLLAMA_TESTS n'est pas définie).
+      - name: Lancement des tests
+        run: python -m pytest -v
+
+  # -------------------------------------------------------------------
+  # 3. Construction de l'image Docker
+  # -------------------------------------------------------------------
+  docker:
+    name: Build Docker
+    runs-on: ubuntu-latest
+    # Ne démarre que si les tests ont réussi.
+    needs: test
+    steps:
+      - uses: actions/checkout@v4
+
+      # Buildx : outil de construction d'images Docker avec cache.
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Construction de l'image de l'API
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          # On vérifie seulement que l'image se construit : elle n'est
+          # envoyée sur aucun registre.
+          push: false
+          tags: rgpd-crag-agent:${{ github.sha }}
+          # Réutilise les couches Docker des exécutions précédentes.
+          # « scope » sépare le cache de chaque image.
+          cache-from: type=gha,scope=api
+          cache-to: type=gha,mode=max,scope=api
+
+      - name: Construction de l'image de l'interface web
+        uses: docker/build-push-action@v6
+        with:
+          context: ./frontend
+          push: false
+          tags: rgpd-crag-agent-frontend:${{ github.sha }}
+          cache-from: type=gha,scope=frontend
+          cache-to: type=gha,mode=max,scope=frontend
+
+  # -------------------------------------------------------------------
+  # 4. Déploiement continu sur le VPS (uniquement sur main)
+  # -------------------------------------------------------------------
+  # Secrets à créer dans GitHub (Settings > Secrets and variables >
+  # Actions > New repository secret) :
+  #   VPS_HOST     : adresse IP publique du VPS
+  #   VPS_USERNAME : utilisateur SSH (de préférence un utilisateur dédié
+  #                  au déploiement, membre du groupe « docker »)
+  #   VPS_SSH_KEY  : clé SSH privée dédiée au déploiement
+  #   VPS_PORT     : port SSH (généralement 22)
+  #   VPS_APP_DIR  : dossier du projet sur le VPS
+  #                  (ex. /home/deploy/Projets_en_Production/rgpd-crag-agent)
+  deploy:
+    name: Déploiement sur le VPS
+    runs-on: ubuntu-latest
+    # Ne démarre que si toutes les étapes précédentes ont réussi.
+    needs: [lint, test, docker]
+    # Uniquement sur main : après la fusion d'une pull request (push), ou
+    # lancé à la main depuis l'onglet « Actions » (workflow_dispatch),
+    # par exemple pour redéployer sans nouveau commit. Jamais sur une
+    # branche de travail ni pour une PR.
+    if: >-
+      github.ref == 'refs/heads/main' &&
+      (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    # « production » apparaît dans l'onglet « Environments » de GitHub,
+    # avec l'historique des déploiements. On peut y ajouter une
+    # validation manuelle avant chaque déploiement si besoin.
+    environment: production
+    steps:
+      - name: Mise à jour du VPS via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USERNAME }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          port: ${{ secrets.VPS_PORT }}
+          # La reconstruction des images peut être longue : on laisse
+          # 30 minutes au lieu des 10 par défaut.
+          command_timeout: 30m
+          script: |
+            # Arrête le script à la première commande en erreur.
+            set -e
+            cd ${{ secrets.VPS_APP_DIR }}
+
+            # 1. Récupération du code de main.
+            #    --ff-only : refuse de fusionner si des fichiers ont été
+            #    modifiés à la main sur le VPS (plutôt que de les écraser).
+            git pull --ff-only origin main
+
+            # Sur le VPS, on ajoute docker-compose.vps.yml : le projet
+            # utilise l'Ollama installé sur le serveur au lieu d'en lancer
+            # un second dans Docker.
+            export COMPOSE_FILE=docker-compose.yml:docker-compose.vps.yml
+
+            # 2. Reconstruction et redémarrage. Pas de « docker compose
+            #    down » : seuls les conteneurs modifiés sont recréés, et
+            #    le volume de la base ChromaDB est conservé.
+            docker compose up -d --build --remove-orphans
+
+            # 3. Suppression des anciennes images pour libérer le disque.
+            docker image prune -f
+
+            # 4. Vérification : l'API doit répondre sur /health
+            #    (30 essais, toutes les 10 secondes = 5 minutes maximum).
+            for attempt in $(seq 1 30); do
+              if curl -fsS http://127.0.0.1:8000/health > /dev/null; then
+                echo "Déploiement réussi : l'API répond."
+                exit 0
+              fi
+              echo "Attente de l'API (essai $attempt/30)..."
+              sleep 10
+            done
+
+            # L'API ne répond pas : on affiche l'état et les derniers
+            # logs pour comprendre le problème, puis on signale l'échec.
+            echo "Échec : l'API ne répond pas."
+            docker compose ps
+            docker compose logs --tail=50 api
+            exit 1
