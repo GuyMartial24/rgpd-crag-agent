@@ -27,12 +27,16 @@ widget de chat) qui renvoie l'historique des échanges à chaque question.
 """
 
 import json
+import logging
+import time
 from typing import TypedDict
 
 from langgraph.graph import END, START, StateGraph
 from ollama import Client
 
 from src.config import Settings, get_settings
+
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------
 # Prompts envoyés au LLM
@@ -121,7 +125,7 @@ Réponds en {language_name} à la question sur le Règlement général sur la \
 protection des données (RGPD) en t'appuyant uniquement sur les extraits \
 ci-dessous et cite les articles ou considérants utilisés. Si les \
 extraits ne permettent pas de répondre complètement, indique-le.
-{history_block}
+
 Extraits :
 {context}
 
@@ -168,7 +172,11 @@ FALLBACK_ANSWERS = {
 
 # Longueur maximale (en caractères) d'une réponse passée recopiée dans
 # les prompts : l'historique reste court et le LLM reste rapide.
-MAX_ANSWER_LENGTH_IN_HISTORY = 500
+MAX_ANSWER_LENGTH_IN_HISTORY = 300
+
+# Nombre maximum de tokens des réponses JSON (analyse, évaluation) :
+# elles ne font que quelques mots, inutile de laisser le LLM continuer.
+MAX_JSON_TOKENS = 200
 
 
 class AgentState(TypedDict, total=False):
@@ -201,6 +209,8 @@ class OllamaLLM:
         )
         self.model = settings.llm_model
         self.temperature = settings.llm_temperature
+        self.max_answer_tokens = settings.max_answer_tokens
+        self.keep_alive = settings.ollama_keep_alive
 
     def invoke(self, prompt: str, json_mode: bool = False) -> str:
         """Envoie le prompt au modèle et retourne sa réponse (texte).
@@ -209,19 +219,56 @@ class OllamaLLM:
         """
         if json_mode:
             response_format = "json"
+            max_tokens = MAX_JSON_TOKENS
         else:
             response_format = None
+            max_tokens = self.max_answer_tokens
 
+        # Remarque : on ne change pas la taille du contexte (num_ctx).
+        # Le modèle est partagé avec d'autres applications sur le
+        # serveur, et une autre valeur obligerait Ollama à le recharger.
         response = self.client.chat(
             model=self.model,
             messages=[{"role": "user", "content": prompt}],
             format=response_format,
-            options={"temperature": self.temperature},
+            options={
+                "temperature": self.temperature,
+                "num_predict": max_tokens,
+            },
+            keep_alive=self.keep_alive,
         )
+        log_timings(response)
 
         if response.message.content is None:
             return ""
         return response.message.content
+
+
+def log_timings(response) -> None:
+    """Écrit dans les logs le temps passé par Ollama sur un appel.
+
+    Ollama donne les durées en nanosecondes : on les convertit en
+    secondes. Ces chiffres montrent où part le temps :
+        chargement : le modèle n'était pas en mémoire ;
+        lecture    : traitement du prompt (proportionnel à sa longueur) ;
+        écriture   : rédaction de la réponse.
+    """
+
+    def seconds(nanoseconds):
+        if nanoseconds is None:
+            return 0.0
+        return nanoseconds / 1_000_000_000
+
+    logger.info(
+        "Ollama : %.1f s au total (chargement %.1f s, lecture de %s tokens "
+        "en %.1f s, écriture de %s tokens en %.1f s)",
+        seconds(response.total_duration),
+        seconds(response.load_duration),
+        response.prompt_eval_count,
+        seconds(response.prompt_eval_duration),
+        response.eval_count,
+        seconds(response.eval_duration),
+    )
 
 
 # ---------------------------------------------------------------------
@@ -341,11 +388,23 @@ def format_context(documents: list[dict]) -> str:
     return "\n\n".join(parts)
 
 
-def format_numbered_documents(documents: list[dict]) -> str:
-    """Numérote les extraits ([1], [2]...) pour l'évaluation groupée."""
+def shorten(text: str, max_length: int) -> str:
+    """Coupe un texte trop long et ajoute « … » à la fin."""
+    if len(text) <= max_length:
+        return text
+    return text[:max_length] + "…"
+
+
+def format_numbered_documents(documents: list[dict], max_length: int) -> str:
+    """Numérote les extraits ([1], [2]...) pour l'évaluation groupée.
+
+    Chaque extrait est raccourci à max_length caractères : le début
+    suffit pour juger s'il est pertinent.
+    """
     parts = []
     for number, document in enumerate(documents, start=1):
-        parts.append(f"[{number}] {document['text']}")
+        text = shorten(document["text"], max_length)
+        parts.append(f"[{number}] {text}")
     return "\n\n".join(parts)
 
 
@@ -356,10 +415,7 @@ def format_history(history: list[dict]) -> str:
     """
     lines = []
     for exchange in history:
-        answer = exchange["answer"]
-        if len(answer) > MAX_ANSWER_LENGTH_IN_HISTORY:
-            answer = answer[:MAX_ANSWER_LENGTH_IN_HISTORY] + "…"
-
+        answer = shorten(exchange["answer"], MAX_ANSWER_LENGTH_IN_HISTORY)
         lines.append("Utilisateur : " + exchange["question"])
         lines.append("Assistant : " + answer)
     return "\n".join(lines)
@@ -372,6 +428,23 @@ def make_history_block(history: list[dict]) -> str:
     return HISTORY_BLOCK.format(history=format_history(history))
 
 
+def timed(step):
+    """Enveloppe une étape du graphe pour mesurer sa durée.
+
+    La fonction renvoyée fait la même chose que l'étape, puis écrit dans
+    les logs son nom et le temps qu'elle a pris.
+    """
+
+    def run_and_measure(state):
+        start = time.perf_counter()
+        result = step(state)
+        duration = time.perf_counter() - start
+        logger.info("Étape %s : %.1f s", step.__name__, duration)
+        return result
+
+    return run_and_measure
+
+
 class CragAgent:
     """Agent CRAG : recherche, vérification, reformulation et réponse.
 
@@ -382,23 +455,26 @@ class CragAgent:
         max_rewrites : nombre maximum de reformulations
         max_history  : nombre maximum d'échanges passés pris en compte
         name, role   : nom et titre de l'assistant (sa personnalité)
+        grade_excerpt_length : longueur des extraits pour l'évaluation
     """
 
     def __init__(
         self,
         retriever,
         llm,
-        top_k=4,
-        max_rewrites=2,
-        max_history=6,
+        top_k=3,
+        max_rewrites=1,
+        max_history=4,
         name="Martial",
         role="Data & AI Engineer",
+        grade_excerpt_length=400,
     ):
         self.retriever = retriever
         self.llm = llm
         self.top_k = top_k
         self.max_rewrites = max_rewrites
         self.max_history = max_history
+        self.grade_excerpt_length = grade_excerpt_length
         # Texte de personnalité, préparé une seule fois.
         self.persona = PERSONA.format(name=name, role=role)
         self.graph = self.build_graph()
@@ -407,14 +483,15 @@ class CragAgent:
         """Assemble les étapes de l'agent dans un graphe LangGraph."""
         workflow = StateGraph(AgentState)
 
-        # Chaque nœud est une étape de l'agent.
-        workflow.add_node("analyze_question", self.analyze_question)
-        workflow.add_node("chat", self.chat)
-        workflow.add_node("retrieve", self.retrieve)
-        workflow.add_node("grade_documents", self.grade_documents)
-        workflow.add_node("transform_query", self.transform_query)
-        workflow.add_node("generate", self.generate)
-        workflow.add_node("fallback", self.fallback)
+        # Chaque nœud est une étape de l'agent. timed() ajoute dans les
+        # logs la durée de chaque étape.
+        workflow.add_node("analyze_question", timed(self.analyze_question))
+        workflow.add_node("chat", timed(self.chat))
+        workflow.add_node("retrieve", timed(self.retrieve))
+        workflow.add_node("grade_documents", timed(self.grade_documents))
+        workflow.add_node("transform_query", timed(self.transform_query))
+        workflow.add_node("generate", timed(self.generate))
+        workflow.add_node("fallback", timed(self.fallback))
 
         # Les arêtes indiquent l'ordre des étapes.
         workflow.add_edge(START, "analyze_question")
@@ -512,7 +589,9 @@ class CragAgent:
 
         prompt = GRADE_PROMPT.format(
             question=state["standalone_question"],
-            documents=format_numbered_documents(documents),
+            documents=format_numbered_documents(
+                documents, self.grade_excerpt_length
+            ),
         )
         llm_answer = self.llm.invoke(prompt, json_mode=True)
         numbers = parse_relevant_numbers(llm_answer, len(documents))
@@ -572,13 +651,17 @@ class CragAgent:
         }
 
     def generate(self, state: AgentState) -> dict:
-        """Étape 3b : rédige la réponse à partir des extraits pertinents."""
+        """Étape 3b : rédige la réponse à partir des extraits pertinents.
+
+        L'historique n'est pas recopié ici : la question autonome
+        (réécrite à l'étape 0) contient déjà le contexte utile, et le
+        prompt reste plus court, donc plus rapide.
+        """
         prompt = GENERATE_PROMPT.format(
             persona=self.persona,
             context=format_context(state["relevant_documents"]),
             question=state["standalone_question"],
             language_name=LANGUAGE_NAMES[state["language"]],
-            history_block=make_history_block(state.get("history", [])),
         )
         answer = self.llm.invoke(prompt)
         return {"answer": answer.strip()}
@@ -659,4 +742,5 @@ def create_default_agent(settings=None) -> CragAgent:
         settings.max_history,
         settings.assistant_name,
         settings.assistant_role,
+        settings.grade_excerpt_length,
     )

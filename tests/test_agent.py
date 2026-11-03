@@ -337,15 +337,38 @@ def test_follow_up_question_is_rewritten_with_history():
     assert retriever.queries == [STANDALONE_QUESTION]
 
 
-def test_generation_prompt_contains_history():
+def test_generation_prompt_uses_standalone_question():
     llm = FakeLLM()
     agent = CragAgent(FakeRetriever({}, default=[ARTICLE_33]), llm)
 
     agent.ask(FOLLOW_UP, history=HISTORY)
 
+    # La génération reçoit la question réécrite, sans l'historique :
+    # le prompt est plus court, donc plus rapide.
     generation_prompt = llm.prompts[-1]
-    assert "Conversation précédente" in generation_prompt
-    assert "Assistant : Sous 72 heures (Article 33)." in generation_prompt
+    assert STANDALONE_QUESTION in generation_prompt
+    assert "Conversation précédente" not in generation_prompt
+
+
+def test_grading_prompt_uses_shortened_extracts():
+    long_text = "72 heures. " + "x" * 2000
+    long_article = {"text": long_text, "section": "Article 33"}
+    llm = FakeLLM()
+    agent = CragAgent(
+        FakeRetriever({}, default=[long_article]),
+        llm,
+        grade_excerpt_length=100,
+    )
+
+    result = agent.ask(QUESTION)
+
+    # L'extrait est coupé pour l'évaluation...
+    grading_prompt = llm.prompts[1]
+    assert "x" * 101 not in grading_prompt
+    assert "…" in grading_prompt
+    # ... mais il reste complet pour la rédaction de la réponse.
+    assert "x" * 2000 in llm.prompts[-1]
+    assert result["sources"] == ["Article 33"]
 
 
 def test_only_recent_history_is_used():
@@ -373,9 +396,9 @@ def test_long_answers_are_truncated_in_history():
 
     text = format_history(history)
 
-    # 500 caractères conservés, suivis de « … ».
-    assert "a" * 500 + "…" in text
-    assert "a" * 501 not in text
+    # 300 caractères conservés, suivis de « … ».
+    assert "a" * 300 + "…" in text
+    assert "a" * 301 not in text
 
 
 # ----- Lecture des réponses JSON du LLM -----

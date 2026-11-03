@@ -38,6 +38,13 @@ class Settings(BaseSettings):
     llm_temperature: float = 0.0
     # Temps maximum (en secondes) accordé à un appel à Ollama.
     request_timeout: float = 120.0
+    # Nombre maximum de mots (tokens) qu'une réponse rédigée peut
+    # contenir : une réponse plus courte est aussi plus rapide.
+    max_answer_tokens: int = 600
+    # Durée pendant laquelle Ollama garde le modèle en mémoire après un
+    # appel. Sans cela, il le décharge après 5 minutes et la question
+    # suivante doit attendre qu'il soit rechargé.
+    ollama_keep_alive: str = "30m"
 
     # ----- Corpus et base vectorielle -----
     # Textes officiels du RGPD (Journal officiel L 119 du 4 mai 2016),
@@ -60,12 +67,16 @@ class Settings(BaseSettings):
 
     # ----- Agent CRAG -----
     # Nombre d'extraits récupérés à chaque recherche.
-    top_k: int = 4
+    top_k: int = 3
     # Nombre maximum de reformulations de la question avant d'abandonner.
-    max_rewrites: int = 2
+    max_rewrites: int = 1
     # Nombre maximum d'échanges passés (question + réponse) pris en
     # compte pour la mémoire de conversation.
-    max_history: int = 6
+    max_history: int = 4
+    # Longueur (en caractères) de chaque extrait montré au LLM pour
+    # l'évaluation : le début suffit pour juger s'il est pertinent, et
+    # un prompt plus court est traité plus vite.
+    grade_excerpt_length: int = 400
 
     # ----- Personnalité de l'assistant -----
     # Nom et titre utilisés dans le prompt de génération des réponses.
