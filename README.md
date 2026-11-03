@@ -69,7 +69,7 @@ rgpd-crag-agent/
 │   ├── widget.js              # Chatbot flottant, intégrable sur n'importe quel site
 │   ├── bot-avatar.png         # Image de l'assistant (voir Crédits)
 │   ├── index.html             # Page de démonstration intégrant le chatbot
-│   ├── page.css
+│   ├── page.css / page.js     # Styles et interactions de la page de démonstration
 │   ├── nginx.conf             # Sert les fichiers et transmet /api/ au backend
 │   └── Dockerfile
 ├── tests/
@@ -116,6 +116,19 @@ Options facultatives (attributs de la balise `<script>`) :
 
 Les styles du widget sont isolés dans un Shadow DOM : ils n'interfèrent pas avec ceux du site
 hôte. Les sites autorisés à appeler l'API se règlent avec `CORS_ORIGINS` (tous par défaut).
+
+La page hôte peut aussi piloter le chatbot en JavaScript, par exemple depuis un bouton
+« Discuter avec Martial » ou une question d'exemple :
+
+```js
+window.RgpdChatWidget.open();                      // ouvre la discussion
+window.RgpdChatWidget.ask("Qu'est-ce qu'un DPO ?"); // ouvre et pose la question
+```
+
+Le widget est animé (bulle flottante, robot qui salue, bulle d'invitation, avatar qui
+« réfléchit » pendant l'attente), propose des questions d'exemple et suit le thème clair ou
+sombre du système. Les animations sont désactivées si l'utilisateur a demandé à son système
+de les réduire. Aucune police ni ressource externe n'est chargée.
 
 ### API
 
