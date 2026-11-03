@@ -784,8 +784,9 @@
     // (« et pour les mineurs ? »).
     let conversation = [];
 
-    // Nombre d'échanges passés envoyés à l'API.
-    const MAX_HISTORY = 6;
+    // Nombre d'échanges passés envoyés à l'API (l'agent en utilise 4,
+    // voir MAX_HISTORY dans src/config.py).
+    const MAX_HISTORY = 4;
     // Taille maximale d'une réponse acceptée par l'API dans l'historique.
     const MAX_ANSWER_LENGTH = 5000;
     // Clé utilisée pour sauvegarder la conversation dans le navigateur.
