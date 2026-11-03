@@ -82,6 +82,9 @@
                 "La réponse prend trop de temps : le serveur est très sollicité. " +
                 "Réessayez dans quelques instants, si possible avec une question plus précise.",
             errorInvalid: "La question doit contenir entre 3 et 1000 caractères.",
+            errorBusy:
+                "Beaucoup de questions arrivent en ce moment et le serveur les traite " +
+                "une par une. Réessayez dans une minute.",
             errorNetwork: "Impossible de joindre le serveur. Vérifiez votre connexion.",
             errorServer: "Erreur inattendue du serveur (code ",
             disclaimer: "Aide à la lecture du RGPD, pas un conseil juridique.",
@@ -120,6 +123,9 @@
                 "The answer is taking too long: the server is very busy. " +
                 "Please try again shortly, ideally with a more specific question.",
             errorInvalid: "The question must be between 3 and 1000 characters long.",
+            errorBusy:
+                "Many questions are coming in right now and the server answers them " +
+                "one at a time. Please try again in a minute.",
             errorNetwork: "Unable to reach the server. Check your connection.",
             errorServer: "Unexpected server error (code ",
             disclaimer: "A reading aid for the GDPR, not legal advice.",
@@ -1357,6 +1363,9 @@
             addBotMessage(texts.errorOllama, true);
         } else if (status === 422) {
             addBotMessage(texts.errorInvalid, true);
+        } else if (status === 429) {
+            // Limite de questions atteinte (voir nginx.conf).
+            addBotMessage(texts.errorBusy, true);
         } else {
             addBotMessage(texts.errorServer + status + ").", true);
         }

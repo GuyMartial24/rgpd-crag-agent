@@ -2,6 +2,10 @@
 
 [![CI/CD](https://github.com/GuyMartial24/rgpd-crag-agent/actions/workflows/ci_cd.yml/badge.svg)](https://github.com/GuyMartial24/rgpd-crag-agent/actions/workflows/ci_cd.yml)
 
+**[Essayer la démo en ligne → martial-rgpd.duckdns.org](https://martial-rgpd.duckdns.org)**
+(serveur sans carte graphique : comptez 30 à 60 secondes par réponse, les questions sont
+traitées une par une)
+
 **Martial**, assistant IA bilingue (français / anglais) de questions-réponses sur le **RGPD**.
 Un agent **Corrective RAG (CRAG)** construit avec **LangGraph**, **Ollama** (LLM et
 embeddings 100 % locaux), **ChromaDB** et **FastAPI**, avec un chatbot web intégrable sur
@@ -370,17 +374,37 @@ echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
 
 ### Accéder au chatbot
 
-Le port 8080 n'étant pas ouvert dans le pare-feu de l'hébergeur, l'accès se fait par un
-**tunnel SSH** depuis son poste :
+La démo publique est en ligne sur **https://martial-rgpd.duckdns.org** :
+
+```
+Internet ──HTTPS──► Caddy (reverse proxy déjà présent sur le serveur, certificat
+                    Let's Encrypt automatique) ──► frontend (nginx, :8080) ──► api
+```
+
+- **Nom de domaine** : sous-domaine gratuit [DuckDNS](https://www.duckdns.org) pointant
+  vers l'IP du VPS. Le port 8080 reste fermé dans le pare-feu de l'hébergeur : seul Caddy
+  (ports 80 et 443) est exposé.
+- **Caddy** : un bloc suffit, `flush_interval -1` transmet le *streaming* sans attendre la
+  fin de la réponse :
+  ```
+  martial-rgpd.duckdns.org {
+      reverse_proxy <IP privée du serveur>:8080 {
+          flush_interval -1
+      }
+  }
+  ```
+- **Protection** ([frontend/nginx.conf](frontend/nginx.conf)) : le serveur traite une seule
+  question à la fois, l'API est donc limitée à 6 questions par minute (7 d'affilée au
+  maximum) et à 4 questions en cours, tous visiteurs confondus. Au-delà, nginx répond `429`
+  et le widget invite à réessayer dans une minute.
+
+Sans domaine, l'accès reste possible par un **tunnel SSH** depuis son poste :
 
 ```bash
 ssh -L 8081:127.0.0.1:8080 utilisateur@IP_DU_VPS
 ```
 
-puis http://localhost:8081 dans le navigateur, tant que la session SSH reste ouverte. Pour
-une mise en ligne publique : ouvrir le port dans la *Security List* de l'hébergeur, ou mieux,
-passer par un reverse proxy (Caddy) avec un nom de domaine et HTTPS, ajouter une limite de
-requêtes et restreindre `CORS_ORIGINS`.
+puis http://localhost:8081 dans le navigateur, tant que la session SSH reste ouverte.
 
 ## Limites connues
 
