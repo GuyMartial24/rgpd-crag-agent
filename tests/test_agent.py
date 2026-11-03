@@ -18,6 +18,7 @@ from fastapi.testclient import TestClient
 from src.graph import (
     FALLBACK_ANSWERS,
     CragAgent,
+    add_missing_context,
     format_history,
     parse_analysis,
     parse_grade,
@@ -448,6 +449,48 @@ def test_grading_prompt_uses_shortened_extracts():
     # ... mais il reste complet pour la rédaction de la réponse.
     assert "x" * 2000 in llm.prompts[-1]
     assert result["sources"] == ["Article 33"]
+
+
+def test_follow_up_not_rewritten_by_llm_keeps_context():
+    # Le LLM renvoie la relance sans la réécrire (cas vu avec un petit
+    # modèle) : la question précédente est ajoutée devant.
+    llm = FakeLLM(standalone=FOLLOW_UP)
+    retriever = FakeRetriever({}, default=[ARTICLE_33])
+    agent = CragAgent(retriever, llm)
+
+    result = agent.ask(FOLLOW_UP, history=HISTORY)
+
+    expected = QUESTION + " " + FOLLOW_UP
+    assert result["standalone_question"] == expected
+    assert retriever.queries == [expected]
+
+
+@pytest.mark.parametrize(
+    ("question", "standalone", "history", "expected"),
+    [
+        # Relance non réécrite : on ajoute la question précédente.
+        ("Et à qui ?", "Et à qui ?", HISTORY, QUESTION + " Et à qui ?"),
+        (
+            "And for minors?",
+            "And for minors?",
+            HISTORY,
+            QUESTION + " And for minors?",
+        ),
+        # Relance réécrite par le LLM : on garde sa version.
+        ("Et à qui ?", "À qui notifier ?", HISTORY, "À qui notifier ?"),
+        # Question indépendante : rien à ajouter.
+        (
+            "Qu'est-ce qu'un DPO ?",
+            "Qu'est-ce qu'un DPO ?",
+            HISTORY,
+            "Qu'est-ce qu'un DPO ?",
+        ),
+        # Pas de conversation : rien à ajouter.
+        ("Et à qui ?", "Et à qui ?", [], "Et à qui ?"),
+    ],
+)
+def test_add_missing_context(question, standalone, history, expected):
+    assert add_missing_context(question, standalone, history) == expected
 
 
 def test_only_recent_history_is_used():

@@ -50,25 +50,58 @@ logger = logging.getLogger(__name__)
 # ligne dans le texte) : il permet de respecter 79 caractères par ligne.
 # ---------------------------------------------------------------------
 
+# Les exemples sont importants : un petit modèle (3 milliards de
+# paramètres) suit beaucoup mieux des exemples concrets qu'une règle
+# abstraite. Sans eux, il recopiait les relances telles quelles
+# (« Et à qui faut-il la signaler ? ») et la recherche perdait le sujet.
 ANALYZE_PROMPT = """Tu analyses le dernier message d'un utilisateur qui \
 discute avec un assistant spécialisé dans le RGPD.
 
+Donne deux informations :
+1. « type » : « rgpd » si le message pose une question sur le RGPD, \
+les données personnelles, la vie privée, la CNIL ou les obligations \
+d'une organisation ; « autre » pour une salutation, un remerciement, \
+une question sur l'assistant lui-même ou un sujet sans rapport.
+2. « question » : le message réécrit en {language_name} sous la forme \
+d'une question complète, compréhensible SANS la conversation. Si le \
+message fait référence à la conversation (« et pour... », « et à \
+qui... », un pronom comme « la », « le », « les », « il », « elle »), \
+remplace cette référence par le sujet dont on parlait. Si le message \
+est déjà complet, recopie-le.
+
+Exemples :
+- Conversation : « Quand le consentement est-il valable ? »
+  Message : « Et pour les mineurs ? »
+  Réponse : {{"type": "rgpd", "question": "Quand le consentement d'un \
+mineur est-il valable ?"}}
+- Conversation : « Dans quel délai notifier une violation de données ? »
+  Message : « Et qui doit la notifier ? »
+  Réponse : {{"type": "rgpd", "question": "Qui doit notifier une \
+violation de données ?"}}
+- Conversation : « Qu'est-ce qu'une donnée sensible ? »
+  Message : « Merci, c'est très clair ! »
+  Réponse : {{"type": "autre", "question": "Merci, c'est très clair !"}}
+
+À toi :
 Conversation précédente :
 {history}
 
 Dernier message : {question}
 
-Donne deux informations :
-1. « type » : « rgpd » si le message porte, même indirectement, sur le \
-RGPD, les données personnelles, la vie privée, la CNIL ou les \
-obligations d'une organisation ; « autre » pour une salutation, un \
-remerciement, une question sur l'assistant lui-même ou un sujet sans \
-rapport. En cas de doute, choisis « rgpd ».
-2. « question » : le message réécrit en {language_name} pour être \
-compréhensible sans la conversation (pronom, sujet sous-entendu, « et \
-pour... »). S'il est déjà clair, recopie-le tel quel.
+Réponds uniquement en JSON : {{"type": "...", "question": "..."}}"""
 
-Réponds uniquement en JSON : {{"type": "rgpd", "question": "..."}}"""
+# Mots qui, en début de message, signalent presque toujours une relance
+# (« Et pour les mineurs ? », « Mais qui doit le faire ? »).
+FOLLOW_UP_STARTS = (
+    "et ",
+    "mais ",
+    "alors ",
+    "aussi ",
+    "and ",
+    "but ",
+    "what about ",
+    "how about ",
+)
 
 GRADE_PROMPT = """Tu évalues des extraits du RGPD pour répondre à une \
 question.
@@ -79,7 +112,10 @@ Extraits :
 {documents}
 
 Un extrait est pertinent s'il contient des informations utiles pour \
-répondre, même partiellement.
+répondre, même partiellement. Le RGPD pose surtout des règles \
+générales : un extrait qui énonce un principe applicable à la situation \
+est pertinent, même s'il ne cite pas le cas précis (employeur, client, \
+site web...).
 Réponds uniquement en JSON avec la liste des numéros des extraits \
 pertinents, par exemple {{"pertinents": [1, 3]}}, ou \
 {{"pertinents": []}} si aucun ne l'est."""
@@ -95,7 +131,9 @@ Extrait :
 {document}
 
 L'extrait est pertinent s'il contient des informations utiles pour \
-répondre, même partiellement.
+répondre, même partiellement. Un extrait qui énonce un principe \
+général applicable à la situation est pertinent, même s'il ne cite pas \
+le cas précis.
 Réponds uniquement en JSON : {{"pertinent": "oui"}} ou \
 {{"pertinent": "non"}}."""
 
@@ -106,9 +144,19 @@ Question initiale : {question}
 Dernière requête utilisée : {query}
 
 Reformule la requête en {language_name} pour retrouver les articles du \
-RGPD qui y répondent, en employant le vocabulaire du règlement \
-(« responsable du traitement » / "controller", « personne concernée » / \
-"data subject", « autorité de contrôle » / "supervisory authority"...).
+RGPD qui y répondent :
+- emploie le vocabulaire du règlement, par exemple :
+  « responsable du traitement » / "controller" (pour une entreprise, \
+un employeur, un site web) ;
+  « personne concernée » / "data subject" (pour un client, un salarié, \
+un utilisateur) ;
+  « violation de données à caractère personnel » / "personal data \
+breach" (pour une fuite, un piratage) ;
+  « limitation de la conservation » / "storage limitation" (pour une \
+durée de conservation) ;
+  « autorité de contrôle » / "supervisory authority" (pour la CNIL) ;
+- formule une question générale : le RGPD pose surtout des principes \
+communs à tous les secteurs.
 Réponds uniquement par la nouvelle requête, sans commentaire."""
 
 # Personnalité de l'assistant, placée en tête des prompts de réponse.
@@ -333,6 +381,31 @@ def parse_analysis(llm_answer: str, question: str) -> tuple[str, str]:
         standalone_question = rewritten
 
     return question_type, standalone_question
+
+
+def add_missing_context(
+    question: str, standalone_question: str, history: list[dict]
+) -> str:
+    """Filet de sécurité pour les relances que le LLM n'a pas réécrites.
+
+    Si le message commence comme une relance (« Et à qui... ? ») et que
+    le LLM l'a renvoyé sans le changer, on le fait précéder de la
+    question précédente. La recherche dans le RGPD garde ainsi le sujet
+    de la conversation, par exemple :
+        « Dans quel délai notifier une violation ? Et à qui ? »
+    """
+    if len(history) == 0:
+        return standalone_question
+
+    unchanged = standalone_question.strip().lower() == question.strip().lower()
+    looks_like_follow_up = (
+        question.strip().lower().startswith(FOLLOW_UP_STARTS)
+    )
+    if not unchanged or not looks_like_follow_up:
+        return standalone_question
+
+    previous_question = history[-1]["question"]
+    return previous_question + " " + question
 
 
 def parse_relevant_numbers(llm_answer: str, count: int):
@@ -573,6 +646,10 @@ class CragAgent:
         question_type, standalone_question = parse_analysis(
             llm_answer, state["question"]
         )
+        if question_type == "rgpd":
+            standalone_question = add_missing_context(
+                state["question"], standalone_question, history
+            )
 
         return {
             "question_type": question_type,
