@@ -124,6 +124,37 @@ code {
     font-size: 0.9rem;
 }
 
+/* ----- Bandeau « site vitrine », tout en haut de la page ----- */
+.showcase-banner {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: center;
+    gap: 6px 12px;
+    padding: 8px 24px;
+    font-size: 0.85rem;
+    text-align: center;
+    color: #ffffff;
+    background: linear-gradient(135deg, var(--primary), var(--accent));
+}
+
+.showcase-tag {
+    padding: 1px 10px;
+    font-size: 0.75rem;
+    font-weight: 700;
+    letter-spacing: 0.03em;
+    text-transform: uppercase;
+    background: rgba(255, 255, 255, 0.2);
+    border: 1px solid rgba(255, 255, 255, 0.4);
+    border-radius: 999px;
+}
+
+.showcase-banner a {
+    font-weight: 600;
+    color: #ffffff;
+    white-space: nowrap;
+}
+
 /* ----- Barre de navigation, collée en haut au défilement ----- */
 .nav {
     position: sticky;
