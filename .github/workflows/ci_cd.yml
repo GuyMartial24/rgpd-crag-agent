@@ -179,9 +179,9 @@ jobs:
             #    modifiés à la main sur le VPS (plutôt que de les écraser).
             git pull --ff-only origin main
 
-            # Sur le VPS, on ajoute docker-compose.vps.yml : le projet
-            # utilise l'Ollama installé sur le serveur au lieu d'en lancer
-            # un second dans Docker.
+            # Sur le VPS, on ajoute docker-compose.vps.yml : Ollama
+            # dédié au projet, prioritaire sur le processeur, sans port
+            # publié (celui du serveur est utilisé par d'autres applis).
             export COMPOSE_FILE=docker-compose.yml:docker-compose.vps.yml
 
             # 2. Reconstruction et redémarrage. Pas de « docker compose

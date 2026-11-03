@@ -72,7 +72,7 @@ rgpd-crag-agent/
 │   └── test_agent.py          # Graphe CRAG, mémoire, personnalité, API, évaluation
 ├── Dockerfile                 # Image de l'API
 ├── docker-compose.yml         # Local : ollama → modèles → ingestion → api → frontend
-├── docker-compose.vps.yml     # Production : réutilise l'Ollama installé sur le VPS
+├── docker-compose.vps.yml     # Production : Ollama dédié et prioritaire sur le processeur
 ├── pyproject.toml             # Configuration de ruff (PEP 8) et pytest
 └── requirements.txt
 ```
@@ -259,61 +259,46 @@ l'ingestion reprenable ne recalcule rien si elle est déjà complète.
 
 ### Architecture en production
 
-Sur le VPS, [docker-compose.vps.yml](docker-compose.vps.yml) complète `docker-compose.yml` :
-le projet **réutilise l'Ollama installé directement sur le serveur** au lieu d'en lancer un
-second dans Docker (économie de RAM et de disque). Modèles utilisés : `qwen2.5:14b` pour les
-réponses, `bge-m3` pour les embeddings.
+Sur le VPS, [docker-compose.vps.yml](docker-compose.vps.yml) complète `docker-compose.yml`.
+Le serveur fait aussi tourner d'autres applications, qui utilisent l'Ollama installé
+directement sur la machine. Le projet garde donc **son propre Ollama dans Docker, avec une
+priorité processeur maximale** (`cpu_shares`) :
+
+- quand l'assistant calcule une réponse, il obtient presque tout le processeur et les autres
+  applications patientent ;
+- dès qu'il a fini, il ne consomme plus rien et les autres applications récupèrent tout le
+  processeur.
+
+Modèles utilisés : `qwen2.5:3b` pour les réponses (léger et bon en français), `bge-m3` pour
+les embeddings. Ils sont téléchargés automatiquement par le service `ollama-pull`.
 
 ```
 Navigateur ──► frontend (nginx, :8080) ──/api/──► api (FastAPI, 127.0.0.1:8000)
                                                     │
                                                     ├─► ChromaDB (volume Docker)
-                                                    └─► Ollama du serveur (:11434)
+                                                    └─► ollama (Docker, prioritaire)
 ```
 
 Seule l'interface web (port 8080) est publiée ; l'API et Ollama ne sont pas accessibles depuis
-Internet.
+Internet (l'Ollama du projet n'est joignable que par le réseau interne de Docker).
 
 ### Préparation du VPS (une seule fois)
 
-Configuration utilisée : Ubuntu 24.04 ARM (Oracle Cloud), 24 Go de RAM. Comptez au moins
-**12 Go de RAM disponibles** pour `qwen2.5:14b` + `bge-m3` sur processeur.
+Configuration utilisée : Ubuntu 24.04 ARM (Oracle Cloud), 4 cœurs, 24 Go de RAM, sans carte
+graphique. Comptez environ **4 Go de RAM disponibles** pour `qwen2.5:3b` + `bge-m3`, et
+prévoyez un fichier d'échange (*swap*) si la mémoire est partagée avec d'autres applications :
+
+```bash
+sudo fallocate -l 8G /swapfile && sudo chmod 600 /swapfile
+sudo mkswap /swapfile && sudo swapon /swapfile
+echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
+```
 
 1. **Docker** ([documentation officielle](https://docs.docker.com/engine/install/ubuntu/)) :
    l'utilisateur de déploiement doit appartenir au groupe `docker` (`groups` pour vérifier,
    sinon `sudo usermod -aG docker $USER` puis reconnexion).
 
-2. **Ollama et les modèles** :
-   ```bash
-   ollama pull qwen2.5:14b
-   ollama pull bge-m3
-   ```
-
-3. **Rendre Ollama accessible aux conteneurs** (par défaut, il n'écoute que sur `127.0.0.1`) :
-   ```bash
-   sudo mkdir -p /etc/systemd/system/ollama.service.d
-   printf '[Service]\nEnvironment="OLLAMA_HOST=0.0.0.0:11434"\n' | sudo tee /etc/systemd/system/ollama.service.d/override.conf
-   sudo systemctl daemon-reload && sudo systemctl restart ollama
-   sudo ss -ltnp | grep 11434     # doit afficher *:11434
-   ```
-
-4. **Pare-feu : autoriser uniquement les réseaux Docker vers Ollama.** Sur les images Oracle
-   Cloud, le pare-feu est géré par `iptables` (pas `ufw`). On ajoute la règle à chaud, puis
-   dans `/etc/iptables/rules.v4` avant chaque ligne `REJECT`, sans utiliser
-   `netfilter-persistent save` (qui enregistrerait aussi les règles temporaires de Docker et
-   de Kubernetes) :
-   ```bash
-   sudo iptables -I INPUT -s 172.16.0.0/12 -p tcp --dport 11434 -j ACCEPT
-   sudo cp /etc/iptables/rules.v4 /etc/iptables/rules.v4.bak
-   sudo sed -i '/^-A INPUT -j REJECT --reject-with icmp-host-prohibited/i -A INPUT -s 172.16.0.0/12 -p tcp -m tcp --dport 11434 -j ACCEPT' /etc/iptables/rules.v4
-   ```
-   Vérification depuis un conteneur :
-   ```bash
-   docker run --rm --add-host=host.docker.internal:host-gateway curlimages/curl \
-     -s http://host.docker.internal:11434/api/tags
-   ```
-
-5. **Clé SSH dédiée au déploiement**, générée sur votre poste puis autorisée sur le VPS :
+2. **Clé SSH dédiée au déploiement**, générée sur votre poste puis autorisée sur le VPS :
    ```bash
    ssh-keygen -t ed25519 -f deploy_key -N "" -C "github-actions-deploy"
    ```
@@ -321,7 +306,7 @@ Configuration utilisée : Ubuntu 24.04 ARM (Oracle Cloud), 24 Go de RAM. Comptez
    (`chmod 700 ~/.ssh && chmod 600 ~/.ssh/authorized_keys`). Sous Windows, `ssh-copy-id`
    n'existe pas : copier la ligne à la main.
 
-6. **Cloner le projet et faire le premier lancement** :
+3. **Cloner le projet et faire le premier lancement** :
    ```bash
    mkdir -p ~/Projets_en_Production && cd ~/Projets_en_Production
    git clone https://github.com/GuyMartial24/rgpd-crag-agent.git
@@ -330,10 +315,11 @@ Configuration utilisée : Ubuntu 24.04 ARM (Oracle Cloud), 24 Go de RAM. Comptez
    docker compose up -d --build
    docker logs -f rgpd-crag-agent-ingest-1     # suivi de l'indexation
    ```
-   La première indexation (1 081 chunks avec `bge-m3` sur processeur ARM) prend environ
-   35 minutes. Le fichier `.env` (ignoré par git) peut aussi surcharger `LLM_MODEL`.
+   Le premier lancement télécharge les modèles (~3 Go), puis indexe le corpus (1 081 chunks
+   avec `bge-m3` sur processeur ARM, environ 35 minutes). Le fichier `.env` (ignoré par git)
+   peut aussi surcharger `LLM_MODEL`.
 
-7. **Secrets GitHub** (*Settings → Secrets and variables → Actions*) :
+4. **Secrets GitHub** (*Settings → Secrets and variables → Actions*) :
 
    | Secret | Valeur |
    |---|---|
@@ -360,10 +346,11 @@ requêtes et restreindre `CORS_ORIGINS`.
 ## Limites connues
 
 - **Temps de réponse** : sur processeur, même avec 3 appels au LLM par question, la
-  rédaction de la réponse reste l'étape la plus longue. Avec `qwen2.5:14b`, une réponse peut
-  prendre une à plusieurs minutes ; un modèle plus léger (`LLM_MODEL=qwen2.5:7b` ou
-  `llama3.1`) réduit nettement ce délai. La réponse n'est affichée qu'une fois complète
-  (pas encore de *streaming*).
+  rédaction de la réponse reste l'étape la plus longue. Les logs de l'API
+  (`docker compose logs -f api`) indiquent la durée de chaque étape et de chaque appel à
+  Ollama. Un modèle plus gros (`qwen2.5:7b`, `llama3.1`) donne des réponses plus riches,
+  mais nettement plus lentes. La réponse n'est affichée qu'une fois complète (pas encore de
+  *streaming*).
 - **Aiguillage** : un message ambigu est traité comme une question RGPD (choix le plus sûr),
   ce qui peut déclencher une recherche inutile.
 
