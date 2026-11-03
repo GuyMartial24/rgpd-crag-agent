@@ -87,6 +87,14 @@
             disclaimer: "Aide à la lecture du RGPD, pas un conseil juridique.",
             understood: "Question comprise",
             newConversation: "Nouvelle conversation",
+            // Étape en cours, affichée à côté des trois points d'attente.
+            steps: {
+                analyze: "Lecture de la question…",
+                search: "Recherche dans le RGPD…",
+                grade: "Vérification des extraits…",
+                rewrite: "Reformulation de la recherche…",
+                write: "Rédaction de la réponse…",
+            },
         },
         en: {
             welcome:
@@ -108,6 +116,13 @@
             disclaimer: "A reading aid for the GDPR, not legal advice.",
             understood: "Understood as",
             newConversation: "New conversation",
+            steps: {
+                analyze: "Reading the question…",
+                search: "Searching the GDPR…",
+                grade: "Checking the extracts…",
+                rewrite: "Rephrasing the search…",
+                write: "Writing the answer…",
+            },
         },
     };
 
@@ -351,8 +366,15 @@
             white-space: normal;
         }
 
-        /* Trois points animés pendant que l'agent réfléchit. */
-        .typing span {
+        /* Trois points animés pendant que l'agent réfléchit, suivis de
+           l'étape en cours. */
+        .typing .status {
+            margin-left: 6px;
+            font-size: 13px;
+            color: var(--text-light);
+        }
+
+        .typing .dot {
             display: inline-block;
             width: 7px;
             height: 7px;
@@ -362,11 +384,11 @@
             animation: blink 1.2s infinite;
         }
 
-        .typing span:nth-child(2) {
+        .typing .dot:nth-child(2) {
             animation-delay: 0.2s;
         }
 
-        .typing span:nth-child(3) {
+        .typing .dot:nth-child(3) {
             animation-delay: 0.4s;
         }
 
@@ -771,8 +793,13 @@
     }
 
     function addBotAnswer(data) {
-        const texts = TEXTS[currentLanguage];
         const bubble = addBotMessage(data.answer, false);
+        decorateAnswer(bubble, data);
+    }
+
+    function decorateAnswer(bubble, data) {
+        // Ajoute sous la réponse les sources et les précisions de l'agent.
+        const texts = TEXTS[currentLanguage];
 
         // Étiquettes des articles utilisés.
         if (data.sources.length > 0) {
@@ -811,12 +838,25 @@
     }
 
     function showTyping() {
+        // Trois points animés et l'étape en cours (HTML fixe, sans
+        // donnée saisie par l'utilisateur).
         const bubble = document.createElement("div");
         bubble.className = "message bot typing";
-        bubble.innerHTML = "<span></span><span></span><span></span>";
+        bubble.innerHTML =
+            '<span class="dot"></span><span class="dot"></span>' +
+            '<span class="dot"></span><span class="status"></span>';
+        setTypingStep(bubble, "analyze");
         messages.appendChild(bubble);
         scrollToBottom();
         return bubble;
+    }
+
+    function setTypingStep(typing, step) {
+        // Affiche l'étape annoncée par l'API (« search », « write »...).
+        const label = TEXTS[currentLanguage].steps[step];
+        if (label) {
+            typing.querySelector(".status").textContent = label;
+        }
     }
 
     function scrollToBottom() {
@@ -847,7 +887,9 @@
         const typing = showTyping();
 
         try {
-            const response = await fetch(apiUrl + "/ask", {
+            // /ask/stream : la réponse est envoyée au fil de sa rédaction,
+            // ce qui permet de l'afficher mot à mot.
+            const response = await fetch(apiUrl + "/ask/stream", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
@@ -858,35 +900,114 @@
                 }),
             });
 
-            typing.remove();
-
             if (response.ok) {
-                const data = await response.json();
-                // On garde la question posée avec la réponse, pour
-                // l'historique et pour un éventuel réaffichage.
-                data.question = question;
-                addBotAnswer(data);
-                // Seuls les échanges réussis rejoignent la mémoire.
-                conversation.push(data);
-                saveConversation();
-            } else if (response.status === 504) {
-                // Délai dépassé (côté API ou côté nginx).
-                addBotMessage(texts.errorTimeout, true);
-            } else if (response.status === 503) {
-                addBotMessage(texts.errorOllama, true);
-            } else if (response.status === 422) {
-                addBotMessage(texts.errorInvalid, true);
+                await readAnswerStream(response, question, typing);
             } else {
-                addBotMessage(texts.errorServer + response.status + ").", true);
+                typing.remove();
+                showError(response.status);
             }
         } catch (error) {
-            // fetch échoue si le serveur ne répond pas du tout.
+            // fetch échoue si le serveur ne répond pas du tout (ou si la
+            // connexion est coupée pendant la réponse).
             typing.remove();
             addBotMessage(texts.errorNetwork, true);
         } finally {
             // « finally » s'exécute dans tous les cas, succès ou erreur.
             setWaiting(false);
             input.focus();
+        }
+    }
+
+    async function readAnswerStream(response, question, typing) {
+        // La réponse arrive en plusieurs morceaux, avec une ligne de
+        // JSON par événement (format « NDJSON ») :
+        //   {"type": "status", "step": "search"}  étape en cours
+        //   {"type": "token", "text": "..."}      morceau de la réponse
+        //   {"type": "done", "answer": "...", ...} fin, résultat complet
+        //   {"type": "error", "status": 504}       erreur pendant l'envoi
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        // Texte reçu mais pas encore traité (une ligne incomplète).
+        let buffer = "";
+        // Bulle de la réponse, créée à l'arrivée du premier morceau.
+        let bubble = null;
+        let answerText = "";
+        let finished = false;
+
+        while (!finished) {
+            const chunk = await reader.read();
+            if (chunk.done) {
+                break;
+            }
+            buffer += decoder.decode(chunk.value, { stream: true });
+
+            // Une ligne peut être coupée entre deux morceaux : on traite
+            // les lignes complètes, la dernière attend la suite.
+            const lines = buffer.split("\n");
+            buffer = lines.pop();
+
+            for (const line of lines) {
+                if (line.trim() === "") {
+                    continue;
+                }
+                const data = JSON.parse(line);
+
+                if (data.type === "status") {
+                    setTypingStep(typing, data.step);
+                } else if (data.type === "token") {
+                    // Premier morceau : la bulle de réponse remplace les
+                    // trois points d'attente.
+                    if (bubble === null) {
+                        typing.remove();
+                        bubble = addBotMessage("", false);
+                    }
+                    answerText += data.text;
+                    bubble.textContent = answerText.trimStart();
+                    scrollToBottom();
+                } else if (data.type === "done") {
+                    typing.remove();
+                    if (bubble === null) {
+                        bubble = addBotMessage("", false);
+                    }
+                    // Réponse complète (nettoyée par l'API), puis sources.
+                    bubble.textContent = data.answer;
+                    delete data.type;
+                    // On garde la question posée avec la réponse, pour
+                    // l'historique et pour un éventuel réaffichage.
+                    data.question = question;
+                    decorateAnswer(bubble, data);
+                    // Seuls les échanges réussis rejoignent la mémoire.
+                    conversation.push(data);
+                    saveConversation();
+                    finished = true;
+                } else if (data.type === "error") {
+                    typing.remove();
+                    showError(data.status);
+                    finished = true;
+                }
+            }
+        }
+
+        // Flux terminé sans événement « done » ni « error » : la
+        // connexion a été coupée en cours de route.
+        if (!finished) {
+            typing.remove();
+            addBotMessage(TEXTS[currentLanguage].errorNetwork, true);
+        }
+    }
+
+    function showError(status) {
+        // Message d'erreur adapté au code HTTP renvoyé par l'API.
+        const texts = TEXTS[currentLanguage];
+        if (status === 504) {
+            // Délai dépassé (côté API ou côté nginx).
+            addBotMessage(texts.errorTimeout, true);
+        } else if (status === 503) {
+            addBotMessage(texts.errorOllama, true);
+        } else if (status === 422) {
+            addBotMessage(texts.errorInvalid, true);
+        } else {
+            addBotMessage(texts.errorServer + status + ").", true);
         }
     }
 

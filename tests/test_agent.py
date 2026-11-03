@@ -119,6 +119,13 @@ class FakeLLM:
         # Prompt de génération de la réponse.
         return "Sous 72 heures (Article 33)."
 
+    def stream(self, prompt):
+        """Même réponse qu'invoke, mais envoyée en deux morceaux."""
+        answer = self.invoke(prompt)
+        middle = len(answer) // 2
+        yield answer[:middle]
+        yield answer[middle:]
+
 
 class FakeRetriever:
     """Faux moteur de recherche.
@@ -302,6 +309,78 @@ def test_off_topic_message_gets_a_direct_answer():
     assert result["search_query"] == ""
     # La réponse garde la personnalité de l'assistant.
     assert llm.prompts[1].startswith("Tu es Martial, Data & AI Engineer")
+
+
+# ----- Réponse envoyée au fil de l'eau (streaming) -----
+
+
+def test_ask_stream_sends_steps_then_answer_parts():
+    retriever = FakeRetriever({}, default=[ARTICLE_33, ARTICLE_1])
+    agent = CragAgent(retriever, FakeLLM())
+
+    events = list(agent.ask_stream(QUESTION))
+
+    # Les étapes annoncées, dans l'ordre.
+    steps = []
+    for event in events:
+        if event["type"] == "status":
+            steps.append(event["step"])
+    assert steps == ["search", "grade", "write"]
+
+    # Les morceaux de la réponse, mis bout à bout, donnent la réponse.
+    text = ""
+    for event in events:
+        if event["type"] == "token":
+            text += event["text"]
+    assert text == "Sous 72 heures (Article 33)."
+
+    # Le dernier événement contient le résultat complet.
+    done = events[-1]
+    assert done["type"] == "done"
+    assert done["answer"] == "Sous 72 heures (Article 33)."
+    assert done["sources"] == ["Article 33"]
+    assert done["standalone_question"] == QUESTION
+
+
+def test_ask_stream_announces_rewrite():
+    rewritten = "délai de notification d'une violation"
+    retriever = FakeRetriever({rewritten: [ARTICLE_33]}, default=[ARTICLE_1])
+    agent = CragAgent(retriever, FakeLLM(rewrite=rewritten))
+
+    events = list(agent.ask_stream(QUESTION))
+
+    steps = []
+    for event in events:
+        if event["type"] == "status":
+            steps.append(event["step"])
+    assert steps == ["search", "grade", "rewrite", "search", "grade", "write"]
+    assert events[-1]["rewrites"] == 1
+
+
+def test_ask_stream_fallback_is_sent_in_one_part():
+    retriever = FakeRetriever({}, default=[ARTICLE_1])
+    agent = CragAgent(retriever, FakeLLM(), max_rewrites=0)
+
+    events = list(agent.ask_stream(QUESTION))
+
+    tokens = []
+    for event in events:
+        if event["type"] == "token":
+            tokens.append(event["text"])
+    assert tokens == [FALLBACK_ANSWERS["fr"]]
+    assert events[-1]["sources"] == []
+
+
+def test_ask_stream_off_topic_message():
+    retriever = FakeRetriever({}, default=[ARTICLE_33])
+    agent = CragAgent(retriever, FakeLLM(question_type="autre"))
+
+    events = list(agent.ask_stream("Bonjour !"))
+
+    # Pas de recherche : on passe directement à la rédaction.
+    assert events[0] == {"type": "status", "step": "write"}
+    assert retriever.queries == []
+    assert events[-1]["answer"] == "Bonjour, je suis Martial, assistant IA."
 
 
 # ----- Mémoire de conversation -----
@@ -593,6 +672,77 @@ def test_ask_returns_504_when_ollama_is_too_slow(client):
     response = client.post("/ask", json={"question": QUESTION})
 
     assert response.status_code == 504
+
+
+def read_json_lines(response):
+    """Lit une réponse NDJSON : une ligne de JSON par événement."""
+    events = []
+    for line in response.text.splitlines():
+        if line.strip() != "":
+            events.append(json.loads(line))
+    return events
+
+
+def test_ask_stream_endpoint(client):
+    retriever = FakeRetriever({}, default=[ARTICLE_33])
+    use_fake_agent(CragAgent(retriever, FakeLLM()))
+
+    response = client.post("/ask/stream", json={"question": QUESTION})
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("application/x-ndjson")
+    events = read_json_lines(response)
+    assert events[0] == {"type": "status", "step": "search"}
+    assert events[-1]["type"] == "done"
+    assert events[-1]["answer"] == "Sous 72 heures (Article 33)."
+    assert events[-1]["sources"] == ["Article 33"]
+
+
+def test_ask_stream_endpoint_rejects_invalid_requests(client):
+    use_fake_agent(None)
+
+    response = client.post("/ask/stream", json={"question": ""})
+
+    # La validation a lieu avant le début de l'envoi : vrai code 422.
+    assert response.status_code == 422
+
+
+def test_ask_stream_endpoint_reports_timeout_as_event(client):
+    class SlowLLM:
+        """Faux LLM qui simule un modèle trop lent (délai dépassé)."""
+
+        def invoke(self, prompt, json_mode=False):
+            raise httpx.ReadTimeout("timed out")
+
+    retriever = FakeRetriever({}, default=[ARTICLE_33])
+    use_fake_agent(CragAgent(retriever, SlowLLM()))
+
+    response = client.post("/ask/stream", json={"question": QUESTION})
+
+    # Le code 200 est déjà envoyé : l'erreur arrive dans un événement.
+    events = read_json_lines(response)
+    assert events[-1]["type"] == "error"
+    assert events[-1]["status"] == 504
+
+
+def test_ask_stream_endpoint_reports_ollama_down_as_event(client):
+    class BrokenLLM:
+        """Faux LLM qui simule un serveur Ollama arrêté."""
+
+        def invoke(self, prompt, json_mode=False):
+            raise ConnectionError("Failed to connect to Ollama")
+
+    retriever = FakeRetriever({}, default=[ARTICLE_33])
+    use_fake_agent(CragAgent(retriever, BrokenLLM()))
+
+    response = client.post("/ask/stream", json={"question": QUESTION})
+
+    events = read_json_lines(response)
+    assert events[-1] == {
+        "type": "error",
+        "status": 503,
+        "detail": "Service LLM indisponible : Failed to connect to Ollama",
+    }
 
 
 # ----- Évaluation de bout en bout (nécessite Ollama) -----
