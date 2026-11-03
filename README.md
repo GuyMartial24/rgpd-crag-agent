@@ -183,12 +183,15 @@ d'environnement ou fichier `.env` :
 | `LLM_MODEL` | `llama3.2:3b` | Modèle de génération / évaluation |
 | `EMBEDDING_MODEL` | `bge-m3` | Modèle d'embeddings (multilingue) |
 | `REQUEST_TIMEOUT` | `120` | Délai maximal d'un appel à Ollama (secondes) |
+| `MAX_ANSWER_TOKENS` | `600` | Longueur maximale d'une réponse (tokens) |
+| `OLLAMA_KEEP_ALIVE` | `30m` | Durée de maintien du modèle en mémoire après un appel |
 | `CORPUS_FILES` | `{"fr": "data/RGPD_FR.pdf", "en": "data/RGPD_EN.pdf"}` | PDF à indexer, par langue (JSON) |
 | `CHROMA_PATH` | `./chroma_db` | Répertoire de la base vectorielle |
 | `CHUNK_SIZE` / `CHUNK_OVERLAP` | `1000` / `150` | Découpage des articles |
-| `TOP_K` | `4` | Nombre d'extraits récupérés |
-| `MAX_REWRITES` | `2` | Reformulations maximales avant abandon |
-| `MAX_HISTORY` | `6` | Échanges passés pris en compte (mémoire de conversation) |
+| `TOP_K` | `3` | Nombre d'extraits récupérés |
+| `MAX_REWRITES` | `1` | Reformulations maximales avant abandon |
+| `MAX_HISTORY` | `4` | Échanges passés pris en compte (mémoire de conversation) |
+| `GRADE_EXCERPT_LENGTH` | `400` | Longueur des extraits montrés au LLM pour l'évaluation (caractères) |
 | `ASSISTANT_NAME` / `ASSISTANT_ROLE` | `Martial` / `Data & AI Engineer` | Personnalité de l'assistant |
 | `CORS_ORIGINS` | `["*"]` | Sites autorisés à appeler l'API (JSON), ex. `["https://mon-site.fr"]` |
 

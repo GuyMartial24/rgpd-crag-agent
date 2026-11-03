@@ -7,6 +7,7 @@ Documentation interactive : http://localhost:8000/docs
 """
 
 import logging
+import time
 from typing import Annotated, Literal
 
 import httpx
@@ -19,6 +20,12 @@ from src import __version__
 from src.config import get_settings
 from src.graph import CragAgent, create_default_agent
 
+# Affiche les messages d'information (durée de chaque étape de l'agent)
+# dans les logs du conteneur : docker compose logs api
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(name)s - %(message)s",
+)
 logger = logging.getLogger(__name__)
 
 app = FastAPI(
@@ -145,6 +152,7 @@ def ask_question(
             {"question": exchange.question, "answer": exchange.answer}
         )
 
+    start = time.perf_counter()
     try:
         result = agent.ask(request.question, request.language, history)
     except httpx.TimeoutException as error:
@@ -164,6 +172,11 @@ def ask_question(
             detail=f"Service LLM indisponible : {error}",
         ) from error
 
+    logger.info(
+        "Question traitée en %.1f s (%d échanges d'historique)",
+        time.perf_counter() - start,
+        len(history),
+    )
     return AskResponse(
         answer=result["answer"],
         sources=result["sources"],
