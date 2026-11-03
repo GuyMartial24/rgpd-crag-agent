@@ -12,6 +12,22 @@ embeddings 100 % locaux), **ChromaDB** et **FastAPI**, avec un chatbot web inté
 n'importe quel site, conteneurisé avec **Docker** et déployé en **CI/CD** sur un VPS via
 GitHub Actions.
 
+## Aperçu
+
+Le site vitrine de démonstration, avec le chatbot en bas à droite :
+
+![Page d'accueil du site vitrine](docs/images/demo-accueil.png)
+
+| La réponse s'écrit au fil de la rédaction (*streaming*) | Réponse complète, avec les articles cités |
+|---|---|
+| ![Réponse en cours d'écriture](docs/images/demo-streaming.png) | ![Réponse complète et sources](docs/images/demo-reponse.png) |
+
+<p align="center">
+  <img src="docs/images/demo-mobile.png" alt="Le chatbot sur mobile" width="300">
+  <br>
+  <em>Sur mobile, la discussion occupe tout l'écran.</em>
+</p>
+
 ## Principe
 
 Un RAG classique génère une réponse à partir des extraits retrouvés, même lorsqu'ils sont hors
@@ -76,6 +92,7 @@ rgpd-crag-agent/
 │   ├── page.css / page.js     # Styles et interactions de la page de démonstration
 │   ├── nginx.conf             # Sert les fichiers et transmet /api/ au backend
 │   └── Dockerfile
+├── docs/images/               # Captures d'écran utilisées dans ce README
 ├── tests/
 │   ├── test_ingest.py         # Extraction des PDF, chunking, ingestion reprenable, ChromaDB
 │   └── test_agent.py          # Graphe CRAG, mémoire, personnalité, API, évaluation
@@ -299,6 +316,16 @@ Les branches de travail et les pull requests sont testées mais jamais déployé
 déploiement peut aussi être relancé à la main depuis l'onglet *Actions* (*Run workflow* sur
 `main`). La base ChromaDB est conservée d'un déploiement à l'autre (volume Docker), et
 l'ingestion reprenable ne recalcule rien si elle est déjà complète.
+
+Une exécution sur `main` : les quatre jobs s'enchaînent, le déploiement n'a lieu que si tous
+les précédents réussissent.
+
+![Graphe des jobs du workflow CI/CD](docs/images/ci-cd-pipeline.png)
+
+L'historique des exécutions : chaque push sur la branche de travail et chaque pull request
+est testé (lint, tests, build), seules les fusions sur `main` sont déployées.
+
+![Historique des exécutions GitHub Actions](docs/images/ci-cd-executions.png)
 
 ### Architecture en production
 
