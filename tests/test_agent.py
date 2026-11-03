@@ -235,7 +235,7 @@ def test_generation_prompt_contains_persona():
     agent.ask(QUESTION)
 
     generation_prompt = llm.prompts[-1]
-    assert generation_prompt.startswith("Tu es Martial, Data & AI Engineer")
+    assert generation_prompt.startswith("Tu es Martial, Assistant RGPD")
     # L'assistant doit rester transparent sur sa nature d'IA.
     assert "assistant d'intelligence artificielle" in generation_prompt
 
@@ -311,7 +311,7 @@ def test_off_topic_message_gets_a_direct_answer():
     assert result["sources"] == []
     assert result["search_query"] == ""
     # La réponse garde la personnalité de l'assistant.
-    assert llm.prompts[1].startswith("Tu es Martial, Data & AI Engineer")
+    assert llm.prompts[1].startswith("Tu es Martial, Assistant RGPD")
 
 
 # ----- Réponse envoyée au fil de l'eau (streaming) -----

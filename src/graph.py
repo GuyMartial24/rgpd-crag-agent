@@ -571,7 +571,7 @@ class CragAgent:
         max_rewrites=1,
         max_history=4,
         name="Martial",
-        role="Data & AI Engineer",
+        role="Assistant RGPD",
         grade_excerpt_length=400,
     ):
         self.retriever = retriever

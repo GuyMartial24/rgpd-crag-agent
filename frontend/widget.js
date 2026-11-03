@@ -12,7 +12,7 @@
 //                   widget.js, suivi de /api)
 //   data-language : langue par défaut, « fr » ou « en » (défaut : fr)
 //   data-title    : nom de l'assistant (défaut : Martial)
-//   data-role     : titre affiché sous le nom (défaut : Data & AI Engineer)
+//   data-role     : titre affiché sous le nom (défaut : Assistant RGPD)
 //   data-avatar   : image de l'assistant (défaut : bot-avatar.png, à côté
 //                   de widget.js)
 //
@@ -45,7 +45,7 @@
         title = scriptTag.dataset.title;
     }
 
-    let role = "Data & AI Engineer";
+    let role = "Assistant RGPD";
     if (scriptTag.dataset.role) {
         role = scriptTag.dataset.role;
     }
@@ -69,9 +69,9 @@
         fr: {
             // {name} et {role} sont remplacés par le nom et le titre.
             welcome:
-                "Bonjour, je suis {name}, {role}. Je suis un assistant IA " +
-                "spécialisé dans le RGPD : posez-moi vos questions, je vous " +
-                "réponds à partir du texte officiel en citant les articles utilisés.",
+                "Bonjour, je suis {name} ({role}), un assistant IA : posez-moi " +
+                "vos questions sur le RGPD, je vous réponds à partir du texte " +
+                "officiel en citant les articles utilisés.",
             placeholder: "Écrivez votre question…",
             send: "Envoyer",
             sources: "Sources",
@@ -110,9 +110,9 @@
         },
         en: {
             welcome:
-                "Hello, I am {name}, {role}. I am an AI assistant specialised " +
-                "in the GDPR: ask me your questions, I answer from the official " +
-                "text and cite the articles used.",
+                "Hello, I am {name} ({role}), an AI assistant: ask me your " +
+                "questions about the GDPR, I answer from the official text and " +
+                "cite the articles used.",
             placeholder: "Type your question…",
             send: "Send",
             sources: "Sources",
