@@ -1,4 +1,4 @@
-# rgpd-crag-agent
+# RGPD-CRAG-AGENT
 
 [![CI/CD](https://github.com/GuyMartial24/rgpd-crag-agent/actions/workflows/ci_cd.yml/badge.svg)](https://github.com/GuyMartial24/rgpd-crag-agent/actions/workflows/ci_cd.yml)
 
