@@ -76,7 +76,7 @@ premiers résultats (par exemple l'Article 6 pour les bases légales).
 
 ### Martial, l'assistant
 
-L'assistant se présente sous le nom de **Martial, Data & AI Engineer** : un ton clair,
+L'assistant se présente sous le nom de **Martial, Assistant RGPD** : un ton clair,
 pédagogique et professionnel, qui vouvoie et cite systématiquement les articles utilisés.
 Il annonce toujours être un **assistant IA**, conformément à l'obligation de transparence de
 l'AI Act européen. Le nom et le titre se règlent avec `ASSISTANT_NAME` et `ASSISTANT_ROLE`.
@@ -147,7 +147,7 @@ Options facultatives (attributs de la balise `<script>`) :
 |---|---|---|
 | `data-language` | `fr` | Langue par défaut (`fr` ou `en`) |
 | `data-title` | `Martial` | Nom de l'assistant affiché dans l'en-tête |
-| `data-role` | `Data & AI Engineer` | Titre affiché sous le nom |
+| `data-role` | `Assistant RGPD` | Titre affiché sous le nom |
 | `data-avatar` | `bot-avatar.png` à côté de `widget.js` | Image de l'assistant |
 | `data-api-url` | serveur qui fournit `widget.js` + `/api` | Adresse de l'API |
 
@@ -268,7 +268,7 @@ d'environnement ou fichier `.env` :
 | `MAX_REWRITES` | `1` | Reformulations maximales avant abandon |
 | `MAX_HISTORY` | `4` | Échanges passés pris en compte (mémoire de conversation) |
 | `GRADE_EXCERPT_LENGTH` | `400` | Longueur des extraits montrés au LLM pour l'évaluation (caractères) |
-| `ASSISTANT_NAME` / `ASSISTANT_ROLE` | `Martial` / `Data & AI Engineer` | Personnalité de l'assistant |
+| `ASSISTANT_NAME` / `ASSISTANT_ROLE` | `Martial` / `Assistant RGPD` | Personnalité de l'assistant |
 | `CORS_ORIGINS` | `["*"]` | Sites autorisés à appeler l'API (JSON), ex. `["https://mon-site.fr"]` |
 
 ## Corpus et indexation

@@ -85,7 +85,7 @@ class Settings(BaseSettings):
     # ----- Personnalité de l'assistant -----
     # Nom et titre utilisés dans le prompt de génération des réponses.
     assistant_name: str = "Martial"
-    assistant_role: str = "Data & AI Engineer"
+    assistant_role: str = "Assistant RGPD"
 
     # ----- API -----
     # Sites autorisés à appeler l'API depuis le navigateur (CORS), par
