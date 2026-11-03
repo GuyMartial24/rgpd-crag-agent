@@ -4,6 +4,7 @@ venv
 .venv
 chroma_db
 tests
+docs
 frontend
 **/__pycache__
 .pytest_cache

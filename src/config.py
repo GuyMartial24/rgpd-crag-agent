@@ -30,7 +30,7 @@ class Settings(BaseSettings):
     # ----- Ollama : serveur qui fait tourner les modèles en local -----
     ollama_base_url: str = "http://localhost:11434"
     # Modèle de langage qui évalue les extraits et rédige les réponses.
-    llm_model: str = "llama3.2:3b"
+    llm_model: str = "qwen2.5:3b"
     # Modèle qui transforme un texte en vecteur (embedding).
     # bge-m3 est multilingue : il fonctionne bien en français.
     embedding_model: str = "bge-m3"

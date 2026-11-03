@@ -109,8 +109,10 @@ rgpd-crag-agent/
 ├── Dockerfile                 # Image de l'API
 ├── docker-compose.yml         # Local : ollama → modèles → ingestion → api → frontend
 ├── docker-compose.vps.yml     # Production : Ollama dédié et prioritaire sur le processeur
+├── .env.example               # Variables d'environnement facultatives (à copier en .env)
 ├── pyproject.toml             # Configuration de ruff (PEP 8) et pytest
-└── requirements.txt
+├── requirements.txt
+└── LICENSE                    # Licence MIT
 ```
 
 ## Démarrage rapide (Docker, en local)
@@ -119,7 +121,7 @@ rgpd-crag-agent/
 docker compose up -d --build
 ```
 
-Au premier lancement, les modèles Ollama sont téléchargés (`llama3.2:3b` et `bge-m3`, ~3 Go),
+Au premier lancement, les modèles Ollama sont téléchargés (`qwen2.5:3b` et `bge-m3`, ~3 Go),
 puis la **base vectorielle fournie** ([data/chroma_db.tar.gz](data/chroma_db.tar.gz)) est
 décompressée en quelques secondes : inutile de recalculer les embeddings, qui prennent environ
 35 minutes sur un processeur sans carte graphique. Ensuite :
@@ -237,10 +239,10 @@ python -m venv venv
 source venv/bin/activate          # Windows : venv\Scripts\activate
 pip install -r requirements.txt
 
-ollama pull llama3.2:3b
+ollama pull qwen2.5:3b
 ollama pull bge-m3
 
-python -m src.ingest              # indexe les PDF de data/ dans ./chroma_db
+python -m src.ingest              # décompresse la base fournie dans ./chroma_db
 uvicorn src.main:app --reload
 ```
 
@@ -252,7 +254,7 @@ d'environnement ou fichier `.env` :
 | Variable | Défaut | Rôle |
 |---|---|---|
 | `OLLAMA_BASE_URL` | `http://localhost:11434` | URL du serveur Ollama |
-| `LLM_MODEL` | `llama3.2:3b` | Modèle de génération / évaluation |
+| `LLM_MODEL` | `qwen2.5:3b` | Modèle de génération / évaluation |
 | `EMBEDDING_MODEL` | `bge-m3` | Modèle d'embeddings (multilingue) |
 | `REQUEST_TIMEOUT` | `120` | Délai maximal d'un appel à Ollama (secondes) |
 | `MAX_ANSWER_TOKENS` | `600` | Longueur maximale d'une réponse (tokens) |
@@ -474,6 +476,16 @@ puis http://localhost:8081 dans le navigateur, tant que la session SSH reste ouv
   nettement plus lentes.
 - **Aiguillage** : un message ambigu est traité comme une question RGPD (choix le plus sûr),
   ce qui peut déclencher une recherche inutile.
+
+## Licence
+
+Le code est publié sous [licence MIT](LICENSE). Deux éléments du dépôt relèvent de leur
+propre licence :
+
+- le texte officiel du RGPD ([data/](data/)), document de l'Union européenne dont la
+  réutilisation est autorisée avec mention de la source ;
+- l'image de l'assistant ([frontend/bot-avatar.png](frontend/bot-avatar.png)), utilisée selon
+  la licence gratuite de Magnific (attribution obligatoire, voir ci-dessous).
 
 ## Crédits
 
