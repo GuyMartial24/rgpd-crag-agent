@@ -23,17 +23,22 @@ pour que la recherche dans le RGPD reste pertinente.
 ```mermaid
 flowchart LR
     S([Question + historique]) --> A{analyze_question<br/>type + question autonome}
-    A -- hors RGPD --> CH[chat<br/>réponse courte de Martial]
+    A -- hors RGPD --> CH[prepare_chat<br/>réponse courte de Martial]
     A -- RGPD --> R[retrieve<br/>ChromaDB]
     R --> G{grade_documents<br/>tous les extraits en 1 appel}
-    G -- extraits pertinents --> GEN[generate<br/>réponse sourcée]
+    G -- extraits pertinents --> GEN[prepare_answer<br/>réponse sourcée]
     G -- aucun, essais restants --> T[transform_query<br/>reformulation]
     T --> R
     G -- aucun, essais épuisés --> F[fallback<br/>« je ne sais pas »]
-    GEN --> E([Réponse + articles cités])
+    GEN --> W[write_answer<br/>rédaction mot à mot]
+    CH --> W
+    W --> E([Réponse + articles cités])
     F --> E
-    CH --> E
 ```
+
+La rédaction (`write_answer`) a lieu après le graphe : la réponse est envoyée au navigateur
+**au fil de son écriture** (*streaming*), et l'étape en cours (« Recherche dans le RGPD… »,
+« Rédaction de la réponse… ») s'affiche pendant l'attente.
 
 Pour limiter le temps de réponse, une question RGPD ne demande que **3 appels au LLM** :
 l'analyse (qui détecte aussi les messages hors sujet comme « bonjour » ou « qui es-tu ? »),
@@ -133,6 +138,27 @@ curl -X POST http://localhost:8000/ask \
 Le champ `language` (`fr` par défaut, ou `en`) choisit la version du règlement interrogée et
 la langue de la réponse. Codes d'erreur : `422` question invalide, `503` Ollama indisponible,
 `504` modèle trop lent (délai `REQUEST_TIMEOUT` dépassé).
+
+**Streaming** : `POST /ask/stream` accepte le même corps et renvoie la réponse au fil de sa
+rédaction, au format [NDJSON](https://github.com/ndjson/ndjson-spec) (une ligne JSON par
+événement). C'est la route utilisée par le widget :
+
+```bash
+curl -N -X POST http://localhost:8000/ask/stream   -H "Content-Type: application/json"   -d '{"question": "Dans quel délai faut-il notifier une violation de données ?"}'
+```
+
+```
+{"type": "status", "step": "search"}
+{"type": "status", "step": "grade"}
+{"type": "status", "step": "write"}
+{"type": "token", "text": "Le responsable"}
+{"type": "token", "text": " du traitement"}
+...
+{"type": "done", "answer": "...", "sources": ["Article 33"], "standalone_question": "...", "search_query": "...", "rewrites": 0}
+```
+
+Le code HTTP `200` étant envoyé avant la réponse, une erreur d'Ollama arrive sous la forme
+d'un dernier événement `{"type": "error", "status": 504, "detail": "..."}` (ou `503`).
 
 ### Mémoire de conversation
 
@@ -348,9 +374,9 @@ requêtes et restreindre `CORS_ORIGINS`.
 - **Temps de réponse** : sur processeur, même avec 3 appels au LLM par question, la
   rédaction de la réponse reste l'étape la plus longue. Les logs de l'API
   (`docker compose logs -f api`) indiquent la durée de chaque étape et de chaque appel à
-  Ollama. Un modèle plus gros (`qwen2.5:7b`, `llama3.1`) donne des réponses plus riches,
-  mais nettement plus lentes. La réponse n'est affichée qu'une fois complète (pas encore de
-  *streaming*).
+  Ollama. Grâce au *streaming*, le texte commence à s'afficher dès que la rédaction démarre.
+  Un modèle plus gros (`qwen2.5:7b`, `llama3.1`) donne des réponses plus riches, mais
+  nettement plus lentes.
 - **Aiguillage** : un message ambigu est traité comme une question RGPD (choix le plus sûr),
   ce qui peut déclencher une recherche inutile.
 

@@ -6,6 +6,7 @@ Lancement en local :
 Documentation interactive : http://localhost:8000/docs
 """
 
+import json
 import logging
 import time
 from typing import Annotated, Literal
@@ -13,6 +14,7 @@ from typing import Annotated, Literal
 import httpx
 from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from ollama import ResponseError
 from pydantic import BaseModel, Field
 
@@ -27,6 +29,9 @@ logging.basicConfig(
     format="%(asctime)s %(levelname)s %(name)s - %(message)s",
 )
 logger = logging.getLogger(__name__)
+
+# Message renvoyé quand le modèle met trop de temps à répondre.
+TIMEOUT_MESSAGE = "Le modèle de langage a mis trop de temps à répondre."
 
 app = FastAPI(
     title="RGPD CRAG Agent",
@@ -144,13 +149,8 @@ def ask_question(
     # l'agent en paramètre.
     agent: Annotated[CragAgent, Depends(get_agent)],
 ) -> AskResponse:
-    """Pose une question sur le RGPD à l'agent."""
-    # Conversion des objets Exchange en simples dictionnaires pour l'agent.
-    history = []
-    for exchange in request.history:
-        history.append(
-            {"question": exchange.question, "answer": exchange.answer}
-        )
+    """Pose une question sur le RGPD à l'agent (réponse complète)."""
+    history = history_to_dicts(request)
 
     start = time.perf_counter()
     try:
@@ -159,10 +159,7 @@ def ask_question(
         # Le modèle a mis plus de REQUEST_TIMEOUT secondes à répondre :
         # code 504 (« délai dépassé ») au lieu d'une erreur 500.
         logger.exception("Délai dépassé lors de l'appel à Ollama")
-        raise HTTPException(
-            status_code=504,
-            detail="Le modèle de langage a mis trop de temps à répondre.",
-        ) from error
+        raise HTTPException(status_code=504, detail=TIMEOUT_MESSAGE) from error
     except (ConnectionError, ResponseError) as error:
         # Ollama est arrêté ou a renvoyé une erreur : on renvoie un code
         # 503 (« service indisponible ») au lieu d'une erreur 500.
@@ -172,15 +169,98 @@ def ask_question(
             detail=f"Service LLM indisponible : {error}",
         ) from error
 
-    logger.info(
-        "Question traitée en %.1f s (%d échanges d'historique)",
-        time.perf_counter() - start,
-        len(history),
-    )
+    log_duration(start, history)
     return AskResponse(
         answer=result["answer"],
         sources=result["sources"],
         standalone_question=result["standalone_question"],
         search_query=result["search_query"],
         rewrites=result["rewrites"],
+    )
+
+
+@app.post("/ask/stream")
+def ask_question_stream(
+    request: AskRequest,
+    agent: Annotated[CragAgent, Depends(get_agent)],
+) -> StreamingResponse:
+    """Pose une question et renvoie la réponse au fil de sa rédaction.
+
+    La réponse est au format « NDJSON » : une ligne de JSON par
+    événement (voir CragAgent.ask_stream) :
+        {"type": "status", "step": "search"}
+        {"type": "token", "text": "Le responsable"}
+        {"type": "token", "text": " du traitement..."}
+        {"type": "done", "answer": "...", "sources": [...], ...}
+
+    Le code HTTP (200) est envoyé avant la réponse : une erreur
+    d'Ollama arrive donc sous la forme d'un dernier événement
+        {"type": "error", "status": 504, "detail": "..."}
+    avec le code qu'aurait renvoyé POST /ask (503 ou 504).
+    """
+    history = history_to_dicts(request)
+
+    def generate_lines():
+        start = time.perf_counter()
+        try:
+            events = agent.ask_stream(
+                request.question, request.language, history
+            )
+            for event in events:
+                yield to_json_line(event)
+        except httpx.TimeoutException:
+            logger.exception("Délai dépassé lors de l'appel à Ollama")
+            yield to_json_line(
+                {"type": "error", "status": 504, "detail": TIMEOUT_MESSAGE}
+            )
+            return
+        except (ConnectionError, ResponseError) as error:
+            logger.exception("Erreur lors de l'appel à Ollama")
+            yield to_json_line(
+                {
+                    "type": "error",
+                    "status": 503,
+                    "detail": f"Service LLM indisponible : {error}",
+                }
+            )
+            return
+        log_duration(start, history)
+
+    return StreamingResponse(
+        generate_lines(),
+        media_type="application/x-ndjson",
+        # Demande aux proxys (nginx...) de transmettre chaque morceau
+        # tout de suite, au lieu d'attendre la fin de la réponse.
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+# ---------------------------------------------------------------------
+# Fonctions utilitaires des routes
+# ---------------------------------------------------------------------
+
+
+def history_to_dicts(request: AskRequest) -> list[dict]:
+    """Convertit les objets Exchange en simples dictionnaires."""
+    history = []
+    for exchange in request.history:
+        history.append(
+            {"question": exchange.question, "answer": exchange.answer}
+        )
+    return history
+
+
+def to_json_line(event: dict) -> str:
+    """Transforme un événement en une ligne de JSON (format NDJSON)."""
+    # ensure_ascii=False : les accents restent lisibles (« é » et non
+    # « \u00e9 »).
+    return json.dumps(event, ensure_ascii=False) + "\n"
+
+
+def log_duration(start: float, history: list[dict]) -> None:
+    """Écrit dans les logs la durée totale de traitement d'une question."""
+    logger.info(
+        "Question traitée en %.1f s (%d échanges d'historique)",
+        time.perf_counter() - start,
+        len(history),
     )

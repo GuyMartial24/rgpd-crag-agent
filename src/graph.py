@@ -10,17 +10,21 @@ parlent pas du sujet. Le CRAG ajoute une étape de vérification :
                           « Quelles sont les conditions du consentement
                           pour les mineurs ? ») ;
        - question hors RGPD (« bonjour », « qui es-tu ? »)
-                                        -> chat (réponse courte, sans
-                                           recherche) ;
+                                        -> prepare_chat (réponse courte,
+                                           sans recherche) ;
     1. retrieve         : on cherche des extraits du RGPD dans ChromaDB ;
     2. grade_documents  : le LLM juge, en un seul appel, quels extraits
                           sont pertinents ;
     3. ensuite, trois cas possibles :
-       - au moins un extrait pertinent  -> generate (on répond) ;
+       - au moins un extrait pertinent  -> prepare_answer (on prépare
+         le prompt de la réponse) ;
        - aucun, mais essais restants     -> transform_query (on
          reformule la question, puis on retourne à l'étape 1) ;
        - aucun, et plus d'essais         -> fallback (on avoue ne pas
          savoir plutôt que d'inventer une réponse).
+    4. rédaction de la réponse : elle a lieu après le graphe, pour
+       pouvoir envoyer la réponse morceau par morceau (« streaming »)
+       pendant que le LLM l'écrit.
 
 Mémoire de conversation : l'API ne stocke rien. C'est le client (le
 widget de chat) qui renvoie l'historique des échanges à chaque question.
@@ -196,7 +200,8 @@ class AgentState(TypedDict, total=False):
     documents: list[dict]  # extraits trouvés par la recherche
     relevant_documents: list[dict]  # extraits jugés pertinents
     rewrites: int  # nombre de reformulations déjà faites
-    answer: str  # réponse finale
+    answer_prompt: str  # prompt à envoyer au LLM pour rédiger la réponse
+    answer: str  # réponse fixe (cas « fallback », sans appel au LLM)
 
 
 class OllamaLLM:
@@ -224,17 +229,11 @@ class OllamaLLM:
             response_format = None
             max_tokens = self.max_answer_tokens
 
-        # Remarque : on ne change pas la taille du contexte (num_ctx).
-        # Le modèle est partagé avec d'autres applications sur le
-        # serveur, et une autre valeur obligerait Ollama à le recharger.
         response = self.client.chat(
             model=self.model,
             messages=[{"role": "user", "content": prompt}],
             format=response_format,
-            options={
-                "temperature": self.temperature,
-                "num_predict": max_tokens,
-            },
+            options=self.make_options(max_tokens),
             keep_alive=self.keep_alive,
         )
         log_timings(response)
@@ -242,6 +241,36 @@ class OllamaLLM:
         if response.message.content is None:
             return ""
         return response.message.content
+
+    def stream(self, prompt: str):
+        """Envoie le prompt et renvoie la réponse morceau par morceau.
+
+        C'est un « générateur » (mot-clé yield) : on l'utilise dans une
+        boucle for, et chaque tour de boucle donne le morceau de texte
+        suivant dès que le LLM l'a écrit.
+        """
+        parts = self.client.chat(
+            model=self.model,
+            messages=[{"role": "user", "content": prompt}],
+            options=self.make_options(self.max_answer_tokens),
+            keep_alive=self.keep_alive,
+            stream=True,
+        )
+        for part in parts:
+            if part.message.content:
+                yield part.message.content
+            # Le dernier morceau contient les durées de l'appel.
+            if part.done:
+                log_timings(part)
+
+    def make_options(self, max_tokens: int) -> dict:
+        """Options du modèle communes à tous les appels.
+
+        Remarque : on ne change pas la taille du contexte (num_ctx) :
+        si le modèle est partagé avec d'autres applications, une autre
+        valeur obligerait Ollama à le recharger.
+        """
+        return {"temperature": self.temperature, "num_predict": max_tokens}
 
 
 def log_timings(response) -> None:
@@ -451,6 +480,7 @@ class CragAgent:
     Paramètres :
         retriever    : objet ayant une méthode search(query, k, language)
         llm          : objet ayant une méthode invoke(prompt, json_mode)
+                       et une méthode stream(prompt)
         top_k        : nombre d'extraits récupérés par recherche
         max_rewrites : nombre maximum de reformulations
         max_history  : nombre maximum d'échanges passés pris en compte
@@ -486,21 +516,21 @@ class CragAgent:
         # Chaque nœud est une étape de l'agent. timed() ajoute dans les
         # logs la durée de chaque étape.
         workflow.add_node("analyze_question", timed(self.analyze_question))
-        workflow.add_node("chat", timed(self.chat))
+        workflow.add_node("prepare_chat", timed(self.prepare_chat))
         workflow.add_node("retrieve", timed(self.retrieve))
         workflow.add_node("grade_documents", timed(self.grade_documents))
         workflow.add_node("transform_query", timed(self.transform_query))
-        workflow.add_node("generate", timed(self.generate))
+        workflow.add_node("prepare_answer", timed(self.prepare_answer))
         workflow.add_node("fallback", timed(self.fallback))
 
         # Les arêtes indiquent l'ordre des étapes.
         workflow.add_edge(START, "analyze_question")
 
-        # Aiguillage : question RGPD -> recherche ; sinon -> chat.
+        # Aiguillage : question RGPD -> recherche ; sinon -> discussion.
         workflow.add_conditional_edges(
             "analyze_question",
             self.route_question,
-            {"retrieve": "retrieve", "chat": "chat"},
+            {"retrieve": "retrieve", "prepare_chat": "prepare_chat"},
         )
         workflow.add_edge("retrieve", "grade_documents")
 
@@ -509,7 +539,7 @@ class CragAgent:
             "grade_documents",
             self.decide_next_step,
             {
-                "generate": "generate",
+                "prepare_answer": "prepare_answer",
                 "transform_query": "transform_query",
                 "fallback": "fallback",
             },
@@ -517,9 +547,9 @@ class CragAgent:
 
         # Après une reformulation, on relance une recherche (boucle).
         workflow.add_edge("transform_query", "retrieve")
-        workflow.add_edge("generate", END)
+        workflow.add_edge("prepare_answer", END)
         workflow.add_edge("fallback", END)
-        workflow.add_edge("chat", END)
+        workflow.add_edge("prepare_chat", END)
 
         return workflow.compile()
 
@@ -551,19 +581,22 @@ class CragAgent:
     def route_question(self, state: AgentState) -> str:
         """Choisit l'étape suivante après l'analyse de la question."""
         if state["question_type"] == "autre":
-            return "chat"
+            return "prepare_chat"
         return "retrieve"
 
-    def chat(self, state: AgentState) -> dict:
-        """Réponse courte à un message hors RGPD, sans recherche."""
+    def prepare_chat(self, state: AgentState) -> dict:
+        """Prompt d'une réponse courte à un message hors RGPD.
+
+        Aucune recherche n'est faite. La réponse elle-même est rédigée
+        après le graphe (voir write_answer).
+        """
         prompt = CHAT_PROMPT.format(
             persona=self.persona,
             history_block=make_history_block(state.get("history", [])),
             question=state["question"],
             language_name=LANGUAGE_NAMES[state["language"]],
         )
-        answer = self.llm.invoke(prompt)
-        return {"answer": answer.strip(), "search_query": ""}
+        return {"answer_prompt": prompt, "search_query": ""}
 
     def retrieve(self, state: AgentState) -> dict:
         """Étape 1 : cherche des extraits du RGPD."""
@@ -622,7 +655,7 @@ class CragAgent:
     def decide_next_step(self, state: AgentState) -> str:
         """Choisit l'étape suivante après l'évaluation des extraits."""
         if len(state["relevant_documents"]) > 0:
-            return "generate"
+            return "prepare_answer"
 
         if state.get("rewrites", 0) < self.max_rewrites:
             return "transform_query"
@@ -650,12 +683,14 @@ class CragAgent:
             "rewrites": state.get("rewrites", 0) + 1,
         }
 
-    def generate(self, state: AgentState) -> dict:
-        """Étape 3b : rédige la réponse à partir des extraits pertinents.
+    def prepare_answer(self, state: AgentState) -> dict:
+        """Étape 3b : prompt de la réponse, avec les extraits pertinents.
 
         L'historique n'est pas recopié ici : la question autonome
         (réécrite à l'étape 0) contient déjà le contexte utile, et le
         prompt reste plus court, donc plus rapide.
+        La réponse elle-même est rédigée après le graphe (voir
+        write_answer).
         """
         prompt = GENERATE_PROMPT.format(
             persona=self.persona,
@@ -663,8 +698,7 @@ class CragAgent:
             question=state["standalone_question"],
             language_name=LANGUAGE_NAMES[state["language"]],
         )
-        answer = self.llm.invoke(prompt)
-        return {"answer": answer.strip()}
+        return {"answer_prompt": prompt}
 
     def fallback(self, state: AgentState) -> dict:
         """Étape 3c : aucun extrait pertinent, on le dit honnêtement."""
@@ -673,7 +707,7 @@ class CragAgent:
     # ----- Utilisation de l'agent -----
 
     def ask(self, question: str, language: str = "fr", history=None) -> dict:
-        """Pose une question à l'agent et retourne sa réponse.
+        """Pose une question à l'agent et retourne sa réponse complète.
 
         Paramètres :
             question : la nouvelle question
@@ -690,6 +724,55 @@ class CragAgent:
                                   (vide pour un message hors RGPD)
             rewrites            : le nombre de reformulations effectuées
         """
+        state = self.graph.invoke(
+            self.make_initial_state(question, language, history)
+        )
+
+        # On rassemble les morceaux de la réponse en un seul texte.
+        parts = []
+        for part in self.write_answer(state):
+            parts.append(part)
+        return self.make_result(state, "".join(parts))
+
+    def ask_stream(self, question: str, language: str = "fr", history=None):
+        """Comme ask, mais renvoie des événements au fur et à mesure.
+
+        C'est un générateur : chaque tour de boucle donne un événement,
+        sous la forme d'un dictionnaire :
+            {"type": "status", "step": ...} : étape suivante de l'agent
+                « search » (recherche), « grade » (vérification des
+                extraits), « rewrite » (reformulation) ou « write »
+                (rédaction) : le widget l'affiche pendant l'attente ;
+            {"type": "token", "text": ...}  : un morceau de la réponse ;
+            {"type": "done", ...}            : fin, avec les mêmes clés
+                que le résultat de ask (réponse complète, sources...).
+        """
+        initial_state = self.make_initial_state(question, language, history)
+        # Copie de l'état, complétée après chaque étape du graphe.
+        state = dict(initial_state)
+
+        # stream_mode="updates" : après chaque étape, LangGraph donne le
+        # nom de l'étape et les clés qu'elle a modifiées. On les recopie
+        # dans « state » pour garder l'état complet.
+        updates = self.graph.stream(initial_state, stream_mode="updates")
+        for update in updates:
+            for step_name, changes in update.items():
+                state.update(changes)
+                next_step = self.describe_next_step(step_name, state)
+                if next_step is not None:
+                    yield {"type": "status", "step": next_step}
+
+        parts = []
+        for part in self.write_answer(state):
+            parts.append(part)
+            yield {"type": "token", "text": part}
+
+        result = self.make_result(state, "".join(parts))
+        result["type"] = "done"
+        yield result
+
+    def make_initial_state(self, question, language, history) -> dict:
+        """État de départ du graphe pour une nouvelle question."""
         if history is None:
             history = []
 
@@ -698,26 +781,70 @@ class CragAgent:
         if len(history) > self.max_history:
             history = history[-self.max_history :]
 
-        initial_state = {
+        return {
             "question": question,
             "language": language,
             "history": history,
             "rewrites": 0,
         }
-        final_state = self.graph.invoke(initial_state)
 
+    def write_answer(self, state: dict):
+        """Étape 4 : rédige la réponse, morceau par morceau.
+
+        Si le graphe a déjà fixé la réponse (cas « fallback »), on la
+        renvoie en un seul morceau, sans appeler le LLM.
+        """
+        if not state.get("answer_prompt"):
+            yield state["answer"]
+            return
+
+        start = time.perf_counter()
+        # « yield from » renvoie un par un les morceaux du LLM.
+        yield from self.llm.stream(state["answer_prompt"])
+        duration = time.perf_counter() - start
+        logger.info("Étape write_answer : %.1f s", duration)
+
+    def describe_next_step(self, step_name: str, state: dict):
+        """Étape suivante à annoncer à l'utilisateur, ou None.
+
+        Le graphe ne dit pas quelle étape va suivre : on la déduit de
+        l'étape qui vient de se terminer et de l'état.
+        """
+        if step_name == "analyze_question":
+            if state["question_type"] == "autre":
+                return "write"
+            return "search"
+
+        if step_name == "retrieve":
+            return "grade"
+
+        if step_name == "grade_documents":
+            if len(state["relevant_documents"]) > 0:
+                return "write"
+            if state.get("rewrites", 0) < self.max_rewrites:
+                return "rewrite"
+            # Plus d'essais : la réponse « je ne sais pas » est immédiate.
+            return None
+
+        if step_name == "transform_query":
+            return "search"
+
+        return None
+
+    def make_result(self, state: dict, answer: str) -> dict:
+        """Résultat renvoyé à l'API à partir de l'état final."""
         # Liste des sources, sans doublon et dans l'ordre d'apparition.
         sources = []
-        for document in final_state.get("relevant_documents", []):
+        for document in state.get("relevant_documents", []):
             if document["section"] not in sources:
                 sources.append(document["section"])
 
         return {
-            "answer": final_state["answer"],
+            "answer": answer.strip(),
             "sources": sources,
-            "standalone_question": final_state["standalone_question"],
-            "search_query": final_state.get("search_query", ""),
-            "rewrites": final_state.get("rewrites", 0),
+            "standalone_question": state["standalone_question"],
+            "search_query": state.get("search_query", ""),
+            "rewrites": state.get("rewrites", 0),
         }
 
 
