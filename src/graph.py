@@ -39,6 +39,7 @@ from langgraph.graph import END, START, StateGraph
 from ollama import Client
 
 from src.config import Settings, get_settings
+from src.vocabulary import expand_query
 
 logger = logging.getLogger(__name__)
 
@@ -684,7 +685,13 @@ class CragAgent:
         if not query:
             query = state["standalone_question"]
 
-        documents = self.retriever.search(query, self.top_k, state["language"])
+        # Le glossaire ajoute les termes du règlement à la requête
+        # (« bases légales » -> « licéité du traitement ») : la recherche
+        # trouve mieux les bons articles. Voir src/vocabulary.py.
+        expanded_query = expand_query(query, state["language"])
+        documents = self.retriever.search(
+            expanded_query, self.top_k, state["language"]
+        )
         return {"search_query": query, "documents": documents}
 
     def grade_documents(self, state: AgentState) -> dict:

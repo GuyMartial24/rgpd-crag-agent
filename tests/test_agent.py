@@ -38,7 +38,9 @@ ARTICLE_1 = {
     "section": "Article 1",
 }
 
-QUESTION = "Combien de temps pour signaler une fuite de données ?"
+# Question sans terme du glossaire (src/vocabulary.py) : elle est
+# cherchée telle quelle.
+QUESTION = "Combien de temps pour signaler une violation de données ?"
 
 # Conversation utilisée pour tester la mémoire : la relance « Et à qui ? »
 # n'a de sens qu'avec l'échange précédent.
@@ -382,6 +384,26 @@ def test_ask_stream_off_topic_message():
     assert events[0] == {"type": "status", "step": "write"}
     assert retriever.queries == []
     assert events[-1]["answer"] == "Bonjour, je suis Martial, assistant IA."
+
+
+# ----- Glossaire : vocabulaire du règlement -----
+
+
+def test_search_uses_regulation_vocabulary():
+    retriever = FakeRetriever({}, default=[ARTICLE_33])
+    agent = CragAgent(retriever, FakeLLM())
+
+    result = agent.ask("Quelles sont les bases légales d'un traitement ?")
+
+    # La recherche reçoit la requête complétée par le terme du RGPD...
+    assert retriever.queries == [
+        "Quelles sont les bases légales d'un traitement ? "
+        "(licéité du traitement)"
+    ]
+    # ... mais la requête affichée à l'utilisateur reste la sienne.
+    assert result["search_query"] == (
+        "Quelles sont les bases légales d'un traitement ?"
+    )
 
 
 # ----- Mémoire de conversation -----
