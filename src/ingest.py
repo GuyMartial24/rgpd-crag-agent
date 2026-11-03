@@ -8,18 +8,26 @@
     5. enregistrer les morceaux et leurs vecteurs dans ChromaDB.
 
 Utilisation en ligne de commande :
-    python -m src.ingest           # indexe uniquement les morceaux manquants
-    python -m src.ingest --reset   # vide la base puis réindexe tout
+    python -m src.ingest            # indexe uniquement les morceaux manquants
+    python -m src.ingest --reset    # vide la base puis réindexe tout
+    python -m src.ingest --export   # enregistre la base dans l'archive
+                                    # fournie avec le projet
 
 L'ingestion est « reprenable » : seuls les morceaux absents de la base
 sont calculés. Si elle est interrompue, il suffit de la relancer pour
 qu'elle reprenne là où elle s'était arrêtée. Si la base est déjà
 complète, elle se termine en quelques secondes.
+
+Base fournie avec le projet : l'archive data/chroma_db.tar.gz contient
+la base déjà calculée avec le modèle bge-m3. Au premier lancement (base
+vide), elle est simplement décompressée : environ 35 minutes de calcul
+évitées sur un processeur sans carte graphique.
 """
 
 import argparse
 import logging
 import re
+import tarfile
 import unicodedata
 from pathlib import Path
 
@@ -31,6 +39,11 @@ from pypdf import PdfReader
 from src.config import Settings, get_settings
 
 logger = logging.getLogger(__name__)
+
+# Modèle d'embedding avec lequel l'archive fournie a été calculée. Avec un
+# autre modèle, elle n'est pas utilisée : les vecteurs ne seraient pas
+# comparables.
+PREBUILT_EMBEDDING_MODEL = "bge-m3"
 
 # Phrases propres à chaque langue, qui servent de repères pour trouver
 # les différentes parties du règlement dans le texte.
@@ -494,6 +507,61 @@ class ChromaRetriever:
 # ---------------------------------------------------------------------
 
 
+def restore_prebuilt_index(settings: Settings) -> bool:
+    """Décompresse la base fournie avec le projet, si c'est utile.
+
+    La base n'est restaurée que si les trois conditions sont réunies :
+        - l'archive existe ;
+        - le modèle d'embedding configuré est celui de l'archive ;
+        - la base locale est vide (on n'écrase jamais une base existante).
+    Retourne True si la base a été restaurée.
+    """
+    archive = settings.prebuilt_index_path
+    if not archive.exists():
+        return False
+
+    if settings.embedding_model != PREBUILT_EMBEDDING_MODEL:
+        logger.info(
+            "Base fournie ignorée : elle a été calculée avec %s, pas avec %s",
+            PREBUILT_EMBEDDING_MODEL,
+            settings.embedding_model,
+        )
+        return False
+
+    chroma_path = settings.chroma_path
+    if chroma_path.exists() and any(chroma_path.iterdir()):
+        return False
+
+    chroma_path.mkdir(parents=True, exist_ok=True)
+    with tarfile.open(archive, "r:gz") as tar:
+        # filter="data" : refuse les fichiers qui sortiraient du dossier
+        # ou les liens dangereux (protection contre une archive piégée).
+        tar.extractall(chroma_path, filter="data")
+
+    logger.info("Base fournie décompressée dans %s", chroma_path)
+    return True
+
+
+def export_index(settings: Settings) -> Path:
+    """Enregistre la base locale dans l'archive fournie avec le projet.
+
+    À lancer après une réindexation (--reset), puis à commiter, pour que
+    les autres utilisateurs profitent de la nouvelle base.
+    """
+    chroma_path = settings.chroma_path
+    archive = settings.prebuilt_index_path
+
+    with tarfile.open(archive, "w:gz") as tar:
+        # Chemins relatifs au dossier de la base, triés pour que deux
+        # exports identiques donnent la même liste de fichiers.
+        for path in sorted(chroma_path.rglob("*")):
+            name = path.relative_to(chroma_path).as_posix()
+            tar.add(path, arcname=name, recursive=False)
+
+    logger.info("Base exportée dans %s", archive)
+    return archive
+
+
 def ingest(settings=None, reset=False) -> int:
     """Lance l'ingestion. Retourne le nombre de morceaux indexés.
 
@@ -502,6 +570,12 @@ def ingest(settings=None, reset=False) -> int:
     """
     if settings is None:
         settings = get_settings()
+
+    # Premier lancement : on part de la base fournie plutôt que de tout
+    # recalculer. À faire avant d'ouvrir ChromaDB, qui crée ses propres
+    # fichiers (le dossier ne serait alors plus vide).
+    if not reset:
+        restore_prebuilt_index(settings)
 
     client = get_chroma_client(settings)
 
@@ -551,12 +625,21 @@ def main():
         action="store_true",
         help="supprime puis reconstruit la collection",
     )
+    parser.add_argument(
+        "--export",
+        action="store_true",
+        help="enregistre la base dans data/chroma_db.tar.gz",
+    )
     args = parser.parse_args()
 
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(message)s",
     )
+
+    if args.export:
+        export_index(get_settings())
+        return
 
     count = ingest(reset=args.reset)
     logger.info("Ingestion terminée : %d chunks indexés", count)

@@ -13,13 +13,17 @@ import pytest
 from src.config import Settings
 from src.ingest import (
     ChromaRetriever,
+    build_chunks,
     check_embedding_model,
     chunk_sections,
+    export_index,
     extract_pdf_text,
     find_missing_chunks,
     get_collection,
     index_chunks,
+    ingest,
     parse_regulation,
+    restore_prebuilt_index,
 )
 
 # Petit extrait au format du Journal officiel, tel que le renvoie
@@ -324,3 +328,74 @@ def test_old_base_without_model_is_accepted(tmp_path):
     )
 
     check_embedding_model(old_collection, Settings())
+
+
+# ----- Base fournie avec le projet (data/chroma_db.tar.gz) -----
+
+
+def test_provided_index_is_complete_and_up_to_date(tmp_path):
+    # La base fournie doit contenir exactement les morceaux produits par
+    # le découpage actuel : sinon, il faut la régénérer (voir README).
+    settings = Settings(chroma_path=tmp_path / "chroma")
+
+    assert restore_prebuilt_index(settings)
+
+    collection = get_collection(settings)
+    check_embedding_model(collection, settings)
+    assert find_missing_chunks(build_chunks(settings), collection) == []
+
+
+def test_ingest_uses_provided_index_without_ollama(tmp_path):
+    # Base vide : l'archive est décompressée et rien n'est à calculer.
+    # Aucun appel à Ollama n'est fait (il n'est pas lancé pendant les
+    # tests) : sinon, ce test échouerait.
+    settings = Settings(chroma_path=tmp_path / "chroma")
+
+    assert ingest(settings) == 0
+
+
+def test_existing_base_is_never_overwritten(tmp_path):
+    settings = Settings(chroma_path=tmp_path / "chroma")
+    settings.chroma_path.mkdir()
+    (settings.chroma_path / "fichier-existant").write_text("ma base")
+
+    assert not restore_prebuilt_index(settings)
+    assert (settings.chroma_path / "fichier-existant").exists()
+
+
+def test_provided_index_ignored_with_another_model(tmp_path):
+    settings = Settings(
+        chroma_path=tmp_path / "chroma", embedding_model="nomic-embed-text"
+    )
+
+    assert not restore_prebuilt_index(settings)
+    assert not settings.chroma_path.exists()
+
+
+def test_missing_archive_is_ignored(tmp_path):
+    settings = Settings(
+        chroma_path=tmp_path / "chroma",
+        prebuilt_index_path=tmp_path / "absente.tar.gz",
+    )
+
+    assert not restore_prebuilt_index(settings)
+
+
+def test_export_then_restore_gives_the_same_base(indexed_collection, tmp_path):
+    # indexed_collection est enregistrée dans tmp_path / "chroma".
+    source = Settings(
+        chroma_path=tmp_path / "chroma",
+        collection_name="test-rgpd",
+        prebuilt_index_path=tmp_path / "export.tar.gz",
+    )
+    count = indexed_collection.count()
+
+    export_index(source)
+    copy = Settings(
+        chroma_path=tmp_path / "copie",
+        collection_name="test-rgpd",
+        prebuilt_index_path=source.prebuilt_index_path,
+    )
+
+    assert restore_prebuilt_index(copy)
+    assert get_collection(copy).count() == count
