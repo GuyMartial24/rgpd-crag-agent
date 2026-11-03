@@ -6,6 +6,8 @@
 (serveur sans carte graphique : comptez 30 à 60 secondes par réponse, les questions sont
 traitées une par une)
 
+**Auteur : Martial GADJEU | Data & AI Engineer** ([GitHub](https://github.com/GuyMartial24))
+
 **Martial**, assistant IA bilingue (français / anglais) de questions-réponses sur le **RGPD**.
 Un agent **Corrective RAG (CRAG)** construit avec **LangGraph**, **Ollama** (LLM et
 embeddings 100 % locaux), **ChromaDB** et **FastAPI**, avec un chatbot web intégrable sur
@@ -476,6 +478,11 @@ puis http://localhost:8081 dans le navigateur, tant que la session SSH reste ouv
   nettement plus lentes.
 - **Aiguillage** : un message ambigu est traité comme une question RGPD (choix le plus sûr),
   ce qui peut déclencher une recherche inutile.
+
+## Auteur
+
+**Martial GADJEU | Data & AI Engineer** — conception, développement et déploiement du
+projet ([GitHub](https://github.com/GuyMartial24)).
 
 ## Licence
 
