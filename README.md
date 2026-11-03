@@ -86,7 +86,8 @@ rgpd-crag-agent/
 ├── .github/workflows/ci_cd.yml # CI/CD GitHub Actions (lint, tests, build Docker, déploiement)
 ├── data/
 │   ├── RGPD_FR.pdf            # Texte officiel du RGPD en français (JO L 119 du 4.5.2016)
-│   └── RGPD_EN.pdf            # Texte officiel du RGPD en anglais
+│   ├── RGPD_EN.pdf            # Texte officiel du RGPD en anglais
+│   └── chroma_db.tar.gz       # Base ChromaDB déjà calculée (bge-m3, 1 081 chunks, 11 Mo)
 ├── src/
 │   ├── config.py              # Paramètres (variables d'environnement / .env)
 │   ├── ingest.py              # Extraction PDF, découpage par article, indexation ChromaDB
@@ -102,7 +103,7 @@ rgpd-crag-agent/
 │   └── Dockerfile
 ├── docs/images/               # Captures d'écran utilisées dans ce README
 ├── tests/
-│   ├── test_ingest.py         # Extraction des PDF, chunking, ingestion reprenable, ChromaDB
+│   ├── test_ingest.py         # Extraction des PDF, chunking, ingestion reprenable, base fournie
 │   ├── test_agent.py          # Graphe CRAG, mémoire, personnalité, API, évaluation
 │   └── test_vocabulary.py     # Glossaire
 ├── Dockerfile                 # Image de l'API
@@ -118,8 +119,10 @@ rgpd-crag-agent/
 docker compose up -d --build
 ```
 
-Au premier lancement, les modèles Ollama sont téléchargés (`llama3.2:3b` et `bge-m3`, ~3 Go)
-puis les deux PDF sont indexés. Ensuite :
+Au premier lancement, les modèles Ollama sont téléchargés (`llama3.2:3b` et `bge-m3`, ~3 Go),
+puis la **base vectorielle fournie** ([data/chroma_db.tar.gz](data/chroma_db.tar.gz)) est
+décompressée en quelques secondes : inutile de recalculer les embeddings, qui prennent environ
+35 minutes sur un processeur sans carte graphique. Ensuite :
 
 - **page de démonstration avec le chatbot** : http://localhost:8080 (bulle en bas à droite)
 - **API** : http://localhost:8000 (documentation interactive : http://localhost:8000/docs)
@@ -284,6 +287,24 @@ changement de `EMBEDDING_MODEL`, l'ingestion s'arrête et demande de reconstruir
 python -m src.ingest --reset
 ```
 
+### Base fournie avec le projet
+
+Le dépôt contient la base déjà calculée, [data/chroma_db.tar.gz](data/chroma_db.tar.gz)
+(`bge-m3`, 1 081 chunks, 11 Mo). Au premier lancement, l'ingestion la décompresse si :
+
+- la base locale est **vide** (une base existante n'est jamais écrasée) ;
+- `EMBEDDING_MODEL` vaut `bge-m3` (avec un autre modèle, les vecteurs ne seraient pas
+  comparables : tout est alors recalculé).
+
+Le test `test_provided_index_is_complete_and_up_to_date` vérifie dans la CI que l'archive
+correspond exactement au découpage actuel. Après une modification du découpage (ou des
+paramètres `CHUNK_SIZE` / `CHUNK_OVERLAP`), régénérez-la puis commitez-la :
+
+```bash
+python -m src.ingest --reset     # recalcule toute la base (~35 min sans GPU)
+python -m src.ingest --export    # enregistre la base dans data/chroma_db.tar.gz
+```
+
 ## Qualité du code
 
 Le code suit la PEP 8 (lignes de 79 caractères maximum), vérifiée par
@@ -394,8 +415,9 @@ echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
    docker compose up -d --build
    docker logs -f rgpd-crag-agent-ingest-1     # suivi de l'indexation
    ```
-   Le premier lancement télécharge les modèles (~3 Go), puis indexe le corpus (1 081 chunks
-   avec `bge-m3` sur processeur ARM, environ 35 minutes). Le fichier `.env` (ignoré par git)
+   Le premier lancement télécharge les modèles (~3 Go), puis décompresse la base fournie
+   en quelques secondes (sans elle, le calcul des 1 081 chunks avec `bge-m3` sur processeur
+   ARM prend environ 35 minutes). Le fichier `.env` (ignoré par git)
    peut aussi surcharger `LLM_MODEL`.
 
 4. **Secrets GitHub** (*Settings → Secrets and variables → Actions*) :

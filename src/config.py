@@ -55,6 +55,10 @@ class Settings(BaseSettings):
     }
     # Dossier où ChromaDB enregistre la base vectorielle.
     chroma_path: Path = ROOT_DIR / "chroma_db"
+    # Base déjà calculée, fournie avec le projet (archive compressée).
+    # Au premier lancement, elle est décompressée dans chroma_path : on
+    # évite ainsi environ 35 minutes de calcul des embeddings.
+    prebuilt_index_path: Path = DATA_DIR / "chroma_db.tar.gz"
     # Nom de la collection (l'équivalent d'une table) dans ChromaDB.
     collection_name: str = "rgpd"
     # Taille maximale d'un morceau de texte (en caractères).
