@@ -65,6 +65,13 @@ l'analyse (qui détecte aussi les messages hors sujet comme « bonjour » ou « 
 l'évaluation groupée des extraits, puis la rédaction. Les messages hors RGPD reçoivent une
 réponse directe en 2 appels, sans recherche.
 
+Avant chaque recherche, un **glossaire** ([src/vocabulary.py](src/vocabulary.py)) complète la
+requête avec les termes du règlement : les utilisateurs parlent de « bases légales », de
+« droit à l'oubli » ou de « fuite de données », alors que le texte dit « licéité du
+traitement », « droit à l'effacement » et « violation de données à caractère personnel ».
+Sans appel supplémentaire au LLM, l'article attendu remonte bien plus souvent dans les
+premiers résultats (par exemple l'Article 6 pour les bases légales).
+
 ### Martial, l'assistant
 
 L'assistant se présente sous le nom de **Martial, Data & AI Engineer** : un ton clair,
@@ -84,6 +91,7 @@ rgpd-crag-agent/
 │   ├── config.py              # Paramètres (variables d'environnement / .env)
 │   ├── ingest.py              # Extraction PDF, découpage par article, indexation ChromaDB
 │   ├── graph.py               # Nœuds et flux de décision LangGraph (CRAG), personnalité
+│   ├── vocabulary.py          # Glossaire : vocabulaire courant -> termes du RGPD
 │   └── main.py                # API REST FastAPI
 ├── frontend/
 │   ├── widget.js              # Chatbot flottant, intégrable sur n'importe quel site
@@ -95,7 +103,8 @@ rgpd-crag-agent/
 ├── docs/images/               # Captures d'écran utilisées dans ce README
 ├── tests/
 │   ├── test_ingest.py         # Extraction des PDF, chunking, ingestion reprenable, ChromaDB
-│   └── test_agent.py          # Graphe CRAG, mémoire, personnalité, API, évaluation
+│   ├── test_agent.py          # Graphe CRAG, mémoire, personnalité, API, évaluation
+│   └── test_vocabulary.py     # Glossaire
 ├── Dockerfile                 # Image de l'API
 ├── docker-compose.yml         # Local : ollama → modèles → ingestion → api → frontend
 ├── docker-compose.vps.yml     # Production : Ollama dédié et prioritaire sur le processeur
