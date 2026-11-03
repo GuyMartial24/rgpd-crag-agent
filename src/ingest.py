@@ -319,10 +319,15 @@ class OllamaEmbedder:
             timeout=settings.request_timeout,
         )
         self.model = settings.embedding_model
+        self.keep_alive = settings.ollama_keep_alive
 
     def embed(self, texts: list[str]) -> list[list[float]]:
         """Retourne un vecteur par texte, dans le même ordre."""
-        response = self.client.embed(model=self.model, input=texts)
+        # keep_alive : le modèle reste en mémoire entre deux questions,
+        # au lieu d'être rechargé (plus de 10 s sur processeur).
+        response = self.client.embed(
+            model=self.model, input=texts, keep_alive=self.keep_alive
+        )
 
         vectors = []
         for vector in response.embeddings:

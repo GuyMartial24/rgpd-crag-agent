@@ -129,6 +129,7 @@ Réponds en {language_name} à la question sur le Règlement général sur la \
 protection des données (RGPD) en t'appuyant uniquement sur les extraits \
 ci-dessous et cite les articles ou considérants utilisés. Si les \
 extraits ne permettent pas de répondre complètement, indique-le.
+Sois concis : 150 mots au maximum, en allant à l'essentiel.
 
 Extraits :
 {context}

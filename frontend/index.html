@@ -3,70 +3,270 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Assistant RGPD</title>
+    <title>Martial · Assistant RGPD</title>
+    <meta name="description"
+          content="Martial, assistant IA qui répond à vos questions sur le RGPD à partir du texte officiel, en citant les articles.">
+    <link rel="icon" href="bot-avatar.png">
     <link rel="stylesheet" href="page.css">
 </head>
 <body>
     <!--
-        Page de démonstration : elle représente un site web quelconque
-        sur lequel le chatbot est intégré. Le chatbot lui-même est
-        entièrement dans widget.js (voir la balise <script> en bas).
+        Page de démonstration : elle représente un site web sur lequel le
+        chatbot est intégré. Le chatbot lui-même est entièrement dans
+        widget.js (voir la balise <script> en bas de la page).
+        Aucune police ni ressource externe n'est chargée : la page ne fait
+        appel à aucun service tiers.
     -->
-    <main class="container">
 
-        <header>
-            <h1>Assistant RGPD</h1>
-            <p class="subtitle">
-                Un agent Corrective RAG qui répond aux questions sur le
-                Règlement général sur la protection des données, à partir
-                du texte officiel en français et en anglais.
-            </p>
-        </header>
+    <!-- ===== Barre de navigation ===== -->
+    <header class="nav">
+        <div class="nav-inner">
+            <a class="brand" href="#">
+                <img src="bot-avatar.png" alt="" width="36" height="36">
+                <span>
+                    <strong>Martial</strong>
+                    <small>Assistant RGPD</small>
+                </span>
+            </a>
+            <nav class="nav-links" aria-label="Navigation principale">
+                <a href="#fonctionnement">Fonctionnement</a>
+                <a href="#integration">Intégration</a>
+                <a class="button button-small button-ghost"
+                   href="https://github.com/GuyMartial24/rgpd-crag-agent"
+                   target="_blank" rel="noopener noreferrer">GitHub</a>
+            </nav>
+        </div>
+    </header>
 
-        <section class="card">
-            <h2>Essayez-le</h2>
-            <p>
-                Cliquez sur la bulle en bas à droite de la page pour discuter
-                avec Martial, l'assistant IA spécialisé dans le RGPD, et posez
-                votre question. Par exemple :
-            </p>
-            <ul>
-                <li>Dans quel délai faut-il notifier une violation de données ?</li>
-                <li>Quelles sont les bases légales d'un traitement ?</li>
-                <li>Quand une analyse d'impact est-elle obligatoire ?</li>
-            </ul>
+    <main>
+        <!-- ===== En-tête de la page (« hero ») ===== -->
+        <section class="hero">
+            <div class="container hero-grid">
+                <div class="hero-text">
+                    <p class="eyebrow">
+                        <span class="pulse-dot" aria-hidden="true"></span>
+                        Agent IA · Corrective RAG
+                    </p>
+                    <h1>
+                        Vos questions sur le RGPD,
+                        <span class="gradient-text">des réponses sourcées.</span>
+                    </h1>
+                    <p class="lead">
+                        Martial, Data &amp; AI Engineer, est un assistant IA qui
+                        répond à partir du texte officiel du règlement, vérifie
+                        chaque extrait avant de répondre et cite les articles
+                        utilisés.
+                    </p>
+                    <div class="hero-actions">
+                        <button class="button button-primary" type="button" data-open-chat>
+                            Discuter avec Martial
+                        </button>
+                        <a class="button button-ghost" href="#integration">
+                            L'intégrer sur un site
+                        </a>
+                    </div>
+                    <ul class="trust">
+                        <li>Texte officiel du JO de l'UE</li>
+                        <li>Français et anglais</li>
+                        <li>Modèles hébergés en interne</li>
+                    </ul>
+                </div>
+
+                <!-- Aperçu d'une conversation (illustration statique). -->
+                <div class="hero-visual" aria-hidden="true">
+                    <div class="glow"></div>
+                    <div class="preview">
+                        <div class="preview-header">
+                            <img src="bot-avatar.png" alt="" width="32" height="32">
+                            <div>
+                                <strong>Martial</strong>
+                                <small><span class="online"></span> En ligne</small>
+                            </div>
+                        </div>
+                        <div class="preview-body">
+                            <p class="bubble bubble-user">
+                                Dans quel délai notifier une violation de données ?
+                            </p>
+                            <p class="bubble bubble-bot">
+                                Le responsable du traitement notifie la violation à
+                                l'autorité de contrôle dans les meilleurs délais et,
+                                si possible, 72 heures au plus tard après en avoir
+                                pris connaissance.
+                                <span class="chips">
+                                    <span>Article 33</span>
+                                    <span>Considérant 85</span>
+                                </span>
+                            </p>
+                            <p class="bubble bubble-user">Et à qui faut-il la signaler ?</p>
+                            <p class="bubble bubble-bot typing-preview">
+                                <span></span><span></span><span></span>
+                            </p>
+                        </div>
+                    </div>
+                    <img class="floating-bot" src="bot-avatar.png" alt="" width="110" height="110">
+                </div>
+            </div>
         </section>
 
-        <section class="card">
-            <h2>Comment ça marche ?</h2>
-            <ol>
-                <li>L'agent cherche les extraits du RGPD les plus proches de la question.</li>
-                <li>Le modèle de langage vérifie que chaque extrait est pertinent.</li>
-                <li>Si aucun ne l'est, la question est reformulée et la recherche relancée.</li>
-                <li>La réponse est rédigée uniquement à partir des extraits retenus, avec les articles cités.</li>
-            </ol>
+        <!-- ===== Questions d'exemple, cliquables ===== -->
+        <section class="section">
+            <div class="container">
+                <h2 class="section-title">Essayez une question</h2>
+                <p class="section-lead">Un clic ouvre la discussion et pose la question à Martial.</p>
+                <div class="examples">
+                    <button class="example" type="button"
+                            data-question="Dans quel délai faut-il notifier une violation de données ?">
+                        <span class="example-tag">Sécurité</span>
+                        Dans quel délai faut-il notifier une violation de données ?
+                    </button>
+                    <button class="example" type="button"
+                            data-question="Quelles sont les bases légales d'un traitement ?">
+                        <span class="example-tag">Licéité</span>
+                        Quelles sont les bases légales d'un traitement ?
+                    </button>
+                    <button class="example" type="button"
+                            data-question="Quand une analyse d'impact est-elle obligatoire ?">
+                        <span class="example-tag">Conformité</span>
+                        Quand une analyse d'impact est-elle obligatoire ?
+                    </button>
+                    <button class="example" type="button"
+                            data-question="Puis-je demander la suppression de mes données personnelles ?">
+                        <span class="example-tag">Droits</span>
+                        Puis-je demander la suppression de mes données personnelles ?
+                    </button>
+                </div>
+            </div>
         </section>
 
-        <section class="card">
-            <h2>Intégrer le chatbot sur un autre site</h2>
-            <p>Ajoutez simplement cette ligne avant la balise <code>&lt;/body&gt;</code> :</p>
-            <pre><code>&lt;script src="http://localhost:8080/widget.js"&gt;&lt;/script&gt;</code></pre>
-            <p>Options facultatives :</p>
-            <pre><code>&lt;script src="http://localhost:8080/widget.js"
-        data-language="en"
+        <!-- ===== Points forts ===== -->
+        <section class="section section-alt">
+            <div class="container">
+                <h2 class="section-title">Pourquoi Martial ?</h2>
+                <div class="features">
+                    <article class="feature">
+                        <div class="feature-icon">
+                            <svg viewBox="0 0 24 24" aria-hidden="true">
+                                <path d="M2 4h6a4 4 0 0 1 4 4v12a3 3 0 0 0-3-3H2z"/>
+                                <path d="M22 4h-6a4 4 0 0 0-4 4v12a3 3 0 0 1 3-3h7z"/>
+                            </svg>
+                        </div>
+                        <h3>Réponses sourcées</h3>
+                        <p>Chaque réponse s'appuie sur le texte officiel et cite les articles et considérants utilisés.</p>
+                    </article>
+                    <article class="feature">
+                        <div class="feature-icon">
+                            <svg viewBox="0 0 24 24" aria-hidden="true">
+                                <path d="M21 12a9 9 0 1 1-3-6.7L21 8"/>
+                                <path d="M21 3v5h-5"/>
+                            </svg>
+                        </div>
+                        <h3>Auto-correction</h3>
+                        <p>Les extraits sont vérifiés avant de répondre ; si aucun ne convient, la recherche est reformulée.</p>
+                    </article>
+                    <article class="feature">
+                        <div class="feature-icon">
+                            <svg viewBox="0 0 24 24" aria-hidden="true">
+                                <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+                            </svg>
+                        </div>
+                        <h3>Données maîtrisées</h3>
+                        <p>Les modèles d'IA tournent sur nos serveurs : aucune question n'est envoyée à un service tiers.</p>
+                    </article>
+                    <article class="feature">
+                        <div class="feature-icon">
+                            <svg viewBox="0 0 24 24" aria-hidden="true">
+                                <circle cx="12" cy="12" r="10"/>
+                                <path d="M2 12h20"/>
+                                <path d="M12 2a15 15 0 0 1 0 20a15 15 0 0 1 0-20z"/>
+                            </svg>
+                        </div>
+                        <h3>Bilingue</h3>
+                        <p>Le règlement est interrogé en français ou en anglais, et la réponse suit la langue choisie.</p>
+                    </article>
+                </div>
+            </div>
+        </section>
+
+        <!-- ===== Fonctionnement en 4 étapes ===== -->
+        <section class="section" id="fonctionnement">
+            <div class="container">
+                <h2 class="section-title">Comment ça marche ?</h2>
+                <ol class="steps">
+                    <li>
+                        <span class="step-number">1</span>
+                        <h3>Compréhension</h3>
+                        <p>La question est analysée et, si besoin, complétée grâce à la conversation en cours.</p>
+                    </li>
+                    <li>
+                        <span class="step-number">2</span>
+                        <h3>Recherche</h3>
+                        <p>Les passages du RGPD les plus proches de la question sont retrouvés.</p>
+                    </li>
+                    <li>
+                        <span class="step-number">3</span>
+                        <h3>Vérification</h3>
+                        <p>Le modèle garde uniquement les extraits pertinents, ou relance une recherche reformulée.</p>
+                    </li>
+                    <li>
+                        <span class="step-number">4</span>
+                        <h3>Réponse</h3>
+                        <p>La réponse est rédigée à partir des seuls extraits retenus et s'affiche au fil de l'écriture.</p>
+                    </li>
+                </ol>
+                <ul class="stack" aria-label="Technologies utilisées">
+                    <li>LangGraph</li>
+                    <li>Ollama</li>
+                    <li>ChromaDB</li>
+                    <li>FastAPI</li>
+                    <li>Docker</li>
+                </ul>
+            </div>
+        </section>
+
+        <!-- ===== Intégration sur un autre site ===== -->
+        <section class="section section-alt" id="integration">
+            <div class="container integration">
+                <div>
+                    <h2 class="section-title">Intégrez Martial sur votre site</h2>
+                    <p class="section-lead">
+                        Une seule ligne avant la balise <code>&lt;/body&gt;</code> suffit.
+                        Le chatbot a ses propres styles, isolés de ceux de votre site.
+                    </p>
+                    <ul class="checklist">
+                        <li>Langue par défaut avec <code>data-language</code></li>
+                        <li>Nom et titre avec <code>data-title</code> et <code>data-role</code></li>
+                        <li>Image personnalisée avec <code>data-avatar</code></li>
+                    </ul>
+                </div>
+                <div class="code-card">
+                    <div class="code-header">
+                        <span class="code-dots" aria-hidden="true"><i></i><i></i><i></i></span>
+                        <span>index.html</span>
+                        <button class="copy" type="button" data-copy="snippet">Copier</button>
+                    </div>
+                    <!-- L'adresse est complétée par page.js avec celle du serveur. -->
+                    <pre><code id="snippet">&lt;script src="http://localhost:8080/widget.js"
+        data-language="fr"
         data-title="Martial"
         data-role="Data &amp; AI Engineer"&gt;&lt;/script&gt;</code></pre>
+                </div>
+            </div>
         </section>
-
-        <footer class="footer">
-            Aide à la lecture du RGPD, ne constitue pas un conseil juridique.
-            <br>
-            Image de l'assistant :
-            <a href="https://www.magnific.com/fr/vecteurs-libre/bot-mignon-dire-aux-utilisateurs-bonjour-chatbot-salue-consultation-ligne_4015765.htm"
-               target="_blank" rel="noopener noreferrer">Image de roserodionova sur Magnific</a>
-        </footer>
     </main>
 
+    <footer class="footer">
+        <div class="container footer-inner">
+            <p>Aide à la lecture du RGPD, ne constitue pas un conseil juridique.</p>
+            <p>
+                Image de l'assistant :
+                <a href="https://www.magnific.com/fr/vecteurs-libre/bot-mignon-dire-aux-utilisateurs-bonjour-chatbot-salue-consultation-ligne_4015765.htm"
+                   target="_blank" rel="noopener noreferrer">Image de roserodionova sur Magnific</a>
+            </p>
+        </div>
+    </footer>
+
+    <!-- Interactions de la page (boutons, copie du code). -->
+    <script src="page.js"></script>
     <!-- Le chatbot : une seule ligne suffit pour l'ajouter à une page. -->
     <script src="widget.js"></script>
 </body>

@@ -87,6 +87,15 @@
             disclaimer: "Aide à la lecture du RGPD, pas un conseil juridique.",
             understood: "Question comprise",
             newConversation: "Nouvelle conversation",
+            online: "En ligne",
+            teaser: "Une question sur le RGPD ? Je vous réponds en citant les articles.",
+            closeTeaser: "Masquer le message",
+            // Questions proposées sous le message d'accueil.
+            suggestions: [
+                "Dans quel délai notifier une violation de données ?",
+                "Quelles sont les bases légales d'un traitement ?",
+                "Puis-je demander la suppression de mes données ?",
+            ],
             // Étape en cours, affichée à côté des trois points d'attente.
             steps: {
                 analyze: "Lecture de la question…",
@@ -116,6 +125,14 @@
             disclaimer: "A reading aid for the GDPR, not legal advice.",
             understood: "Understood as",
             newConversation: "New conversation",
+            online: "Online",
+            teaser: "A question about the GDPR? I answer and cite the articles.",
+            closeTeaser: "Hide the message",
+            suggestions: [
+                "When must a data breach be notified?",
+                "What are the legal bases for processing?",
+                "Can I ask for my data to be erased?",
+            ],
             steps: {
                 analyze: "Reading the question…",
                 search: "Searching the GDPR…",
@@ -131,12 +148,15 @@
         :host {
             --primary: #1d4ed8;
             --primary-hover: #1e40af;
+            --accent: #4f46e5;
             --background: #ffffff;
-            --surface: #f3f4f6;
-            --text: #1f2933;
-            --text-light: #6b7280;
-            --border: #e5e7eb;
+            --surface: #f4f6fb;
+            --text: #0f172a;
+            --text-light: #64748b;
+            --border: #e2e8f0;
             --error: #b91c1c;
+            --online: #22c55e;
+            --shadow: 0 12px 40px rgba(15, 23, 42, 0.18);
             font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
             font-size: 15px;
             line-height: 1.5;
@@ -147,12 +167,14 @@
             :host {
                 --primary: #3b82f6;
                 --primary-hover: #2563eb;
-                --background: #1f2937;
-                --surface: #111827;
-                --text: #f3f4f6;
-                --text-light: #9ca3af;
-                --border: #374151;
+                --accent: #818cf8;
+                --background: #0f172a;
+                --surface: #111c33;
+                --text: #e2e8f0;
+                --text-light: #94a3b8;
+                --border: #1e293b;
                 --error: #f87171;
+                --shadow: 0 12px 40px rgba(0, 0, 0, 0.5);
             }
         }
 
@@ -160,51 +182,94 @@
             box-sizing: border-box;
         }
 
-        /* Bouton rond flottant en bas à droite. */
+        /* ----- Bouton rond flottant en bas à droite ----- */
         .launcher {
             position: fixed;
-            right: 20px;
-            bottom: 20px;
-            width: 60px;
-            height: 60px;
+            right: 24px;
+            bottom: 24px;
+            width: 64px;
+            height: 64px;
+            padding: 0;
             border: none;
             border-radius: 50%;
-            background: var(--primary);
+            background: linear-gradient(135deg, var(--primary), var(--accent));
             color: #ffffff;
             cursor: pointer;
-            box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25);
+            box-shadow: 0 8px 24px rgba(29, 78, 216, 0.4);
             display: flex;
             align-items: center;
             justify-content: center;
-            transition: transform 0.2s;
+            /* Le bouton flotte doucement de haut en bas. */
+            animation: float 3.2s ease-in-out infinite;
         }
 
-        .launcher:hover {
-            transform: scale(1.06);
-            background: var(--primary-hover);
+        @keyframes float {
+            0%, 100% { transform: translateY(0); }
+            50% { transform: translateY(-6px); }
+        }
+
+        /* Halo qui s'agrandit et s'efface, pour attirer l'attention
+           jusqu'à la première ouverture de la discussion. */
+        .launcher::before {
+            content: "";
+            position: absolute;
+            inset: 0;
+            border-radius: 50%;
+            border: 3px solid var(--primary);
+            animation: pulse 2.4s ease-out infinite;
+            pointer-events: none;
+        }
+
+        @keyframes pulse {
+            0% { transform: scale(1); opacity: 0.7; }
+            100% { transform: scale(1.55); opacity: 0; }
+        }
+
+        .launcher.seen::before {
+            display: none;
+        }
+
+        /* Fenêtre ouverte : le bouton arrête de flotter. */
+        .launcher.is-open {
+            animation: none;
         }
 
         .launcher svg {
             width: 28px;
             height: 28px;
+            transition: transform 0.2s;
+        }
+
+        .launcher:hover svg,
+        .launcher:hover img {
+            transform: scale(1.08);
         }
 
         /* Quand l'image de l'assistant est chargée, la bulle devient un
            rond blanc à bordure bleue qui affiche le robot. */
         .launcher img {
             display: none;
-            width: 46px;
-            height: 46px;
+            width: 48px;
+            height: 48px;
             object-fit: contain;
+            transition: transform 0.2s;
+            /* Le robot salue de la main de temps en temps. */
+            transform-origin: 50% 80%;
+            animation: wave 6s ease-in-out 1.5s infinite;
+        }
+
+        @keyframes wave {
+            0%, 18%, 100% { rotate: 0deg; }
+            3% { rotate: 14deg; }
+            6% { rotate: -8deg; }
+            9% { rotate: 14deg; }
+            12% { rotate: -4deg; }
+            15% { rotate: 10deg; }
         }
 
         .launcher.has-avatar {
             background: #ffffff;
             border: 3px solid var(--primary);
-        }
-
-        .launcher.has-avatar:hover {
-            background: #ffffff;
         }
 
         .launcher.has-avatar img {
@@ -215,22 +280,87 @@
             display: none;
         }
 
-        /* Fenêtre de discussion. */
+        /* Point vert « en ligne ». */
+        .online-dot {
+            position: absolute;
+            right: 2px;
+            bottom: 2px;
+            width: 14px;
+            height: 14px;
+            border-radius: 50%;
+            background: var(--online);
+            border: 2px solid #ffffff;
+        }
+
+        /* ----- Bulle d'invitation à côté du bouton ----- */
+        .teaser {
+            position: fixed;
+            right: 100px;
+            bottom: 36px;
+            max-width: 240px;
+            padding: 12px 34px 12px 14px;
+            background: var(--background);
+            color: var(--text);
+            border: 1px solid var(--border);
+            border-radius: 14px 14px 4px 14px;
+            box-shadow: var(--shadow);
+            font-size: 14px;
+            cursor: pointer;
+            animation: pop-in 0.35s ease-out;
+        }
+
+        .teaser[hidden] {
+            display: none;
+        }
+
+        .teaser-close {
+            position: absolute;
+            top: 6px;
+            right: 6px;
+            width: 22px;
+            height: 22px;
+            border: none;
+            border-radius: 50%;
+            background: transparent;
+            color: var(--text-light);
+            font-size: 16px;
+            line-height: 1;
+            cursor: pointer;
+        }
+
+        .teaser-close:hover {
+            background: var(--surface);
+        }
+
+        @keyframes pop-in {
+            from { opacity: 0; transform: translateY(8px) scale(0.95); }
+            to { opacity: 1; transform: none; }
+        }
+
+        /* ----- Fenêtre de discussion ----- */
         .panel {
             position: fixed;
-            right: 20px;
-            bottom: 92px;
-            width: 380px;
-            height: 560px;
-            max-height: calc(100vh - 112px);
+            right: 24px;
+            bottom: 104px;
+            width: 390px;
+            height: 600px;
+            max-height: calc(100vh - 128px);
             display: flex;
             flex-direction: column;
             background: var(--background);
             color: var(--text);
             border: 1px solid var(--border);
-            border-radius: 16px;
-            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.25);
+            border-radius: 20px;
+            box-shadow: var(--shadow);
             overflow: hidden;
+            /* La fenêtre s'ouvre en grandissant depuis le bouton. */
+            transform-origin: bottom right;
+            animation: panel-in 0.25s ease-out;
+        }
+
+        @keyframes panel-in {
+            from { opacity: 0; transform: translateY(16px) scale(0.96); }
+            to { opacity: 1; transform: none; }
         }
 
         .panel[hidden] {
@@ -240,18 +370,19 @@
         .header {
             display: flex;
             align-items: center;
-            gap: 8px;
-            padding: 12px 16px;
-            background: var(--primary);
+            gap: 10px;
+            padding: 14px 16px;
+            background: linear-gradient(135deg, var(--primary), var(--accent));
             color: #ffffff;
         }
 
         /* Rond avec l'image de l'assistant (ou son initiale si l'image
            ne peut pas être chargée). */
         .avatar {
+            position: relative;
             flex: none;
-            width: 40px;
-            height: 40px;
+            width: 42px;
+            height: 42px;
             border-radius: 50%;
             background: #ffffff;
             color: var(--primary);
@@ -259,13 +390,29 @@
             display: flex;
             align-items: center;
             justify-content: center;
-            overflow: hidden;
         }
 
         .avatar img {
-            width: 34px;
-            height: 34px;
+            width: 36px;
+            height: 36px;
             object-fit: contain;
+        }
+
+        .avatar .online-dot {
+            right: -1px;
+            bottom: -1px;
+            width: 12px;
+            height: 12px;
+        }
+
+        /* Pendant que l'assistant réfléchit, son avatar sautille. */
+        .avatar.thinking img {
+            animation: think 1s ease-in-out infinite;
+        }
+
+        @keyframes think {
+            0%, 100% { transform: translateY(0); }
+            50% { transform: translateY(-3px) rotate(-6deg); }
         }
 
         .identity {
@@ -280,38 +427,56 @@
         }
 
         .role {
-            margin: 0;
+            margin: 2px 0 0;
             font-size: 12px;
-            opacity: 0.85;
+            opacity: 0.9;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
         }
 
         .header select {
             font: inherit;
-            font-size: 13px;
-            padding: 2px 4px;
-            border: none;
-            border-radius: 6px;
-        }
-
-        .close,
-        .reset {
-            border: none;
-            background: transparent;
+            font-size: 12px;
+            font-weight: 600;
+            padding: 3px 4px;
             color: #ffffff;
-            font-size: 22px;
-            line-height: 1;
+            background: rgba(255, 255, 255, 0.18);
+            border: 1px solid rgba(255, 255, 255, 0.35);
+            border-radius: 8px;
             cursor: pointer;
         }
 
-        .reset {
-            font-size: 18px;
+        .header select option {
+            color: #0f172a;
         }
 
-        /* Zone des messages, avec défilement vertical. */
+        .icon-button {
+            width: 32px;
+            height: 32px;
+            border: none;
+            border-radius: 50%;
+            background: transparent;
+            color: #ffffff;
+            font-size: 20px;
+            line-height: 1;
+            cursor: pointer;
+            transition: background 0.15s;
+        }
+
+        .icon-button:hover {
+            background: rgba(255, 255, 255, 0.18);
+        }
+
+        .reset {
+            font-size: 17px;
+        }
+
+        /* ----- Zone des messages, avec défilement vertical ----- */
         .messages {
             flex: 1;
             overflow-y: auto;
-            padding: 16px;
+            padding: 18px 16px;
             display: flex;
             flex-direction: column;
             gap: 12px;
@@ -319,16 +484,23 @@
         }
 
         .message {
-            max-width: 85%;
+            max-width: 86%;
             padding: 10px 14px;
-            border-radius: 14px;
+            border-radius: 16px;
             white-space: pre-wrap;
             word-wrap: break-word;
+            /* Chaque nouveau message apparaît en glissant vers le haut. */
+            animation: message-in 0.25s ease-out;
+        }
+
+        @keyframes message-in {
+            from { opacity: 0; transform: translateY(6px); }
+            to { opacity: 1; transform: none; }
         }
 
         .message.user {
             align-self: flex-end;
-            background: var(--primary);
+            background: linear-gradient(135deg, var(--primary), var(--accent));
             color: #ffffff;
             border-bottom-right-radius: 4px;
         }
@@ -338,6 +510,7 @@
             background: var(--background);
             border: 1px solid var(--border);
             border-bottom-left-radius: 4px;
+            box-shadow: 0 1px 2px rgba(15, 23, 42, 0.05);
         }
 
         .message.error {
@@ -348,15 +521,18 @@
             display: flex;
             flex-wrap: wrap;
             gap: 6px;
-            margin-top: 8px;
+            margin-top: 10px;
             white-space: normal;
         }
 
         .sources span {
-            padding: 1px 8px;
+            padding: 2px 10px;
             border-radius: 999px;
+            background: var(--surface);
             border: 1px solid var(--border);
+            color: var(--primary);
             font-size: 12px;
+            font-weight: 600;
         }
 
         .details {
@@ -364,6 +540,34 @@
             font-size: 12px;
             color: var(--text-light);
             white-space: normal;
+        }
+
+        /* Questions proposées sous le message d'accueil. */
+        .suggestions {
+            display: flex;
+            flex-direction: column;
+            align-items: flex-start;
+            gap: 8px;
+            animation: message-in 0.25s ease-out;
+        }
+
+        .suggestions button {
+            max-width: 86%;
+            padding: 8px 12px;
+            text-align: left;
+            font: inherit;
+            font-size: 13px;
+            color: var(--primary);
+            background: var(--background);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            cursor: pointer;
+            transition: border-color 0.15s, transform 0.15s;
+        }
+
+        .suggestions button:hover {
+            border-color: var(--primary);
+            transform: translateX(2px);
         }
 
         /* Trois points animés pendant que l'agent réfléchit, suivis de
@@ -380,7 +584,7 @@
             height: 7px;
             margin: 0 2px;
             border-radius: 50%;
-            background: var(--text-light);
+            background: var(--primary);
             animation: blink 1.2s infinite;
         }
 
@@ -393,13 +597,14 @@
         }
 
         @keyframes blink {
-            0%, 80%, 100% { opacity: 0.2; }
-            40% { opacity: 1; }
+            0%, 80%, 100% { opacity: 0.2; transform: translateY(0); }
+            40% { opacity: 1; transform: translateY(-3px); }
         }
 
-        /* Zone de saisie en bas de la fenêtre. */
+        /* ----- Zone de saisie en bas de la fenêtre ----- */
         .composer {
             display: flex;
+            align-items: flex-end;
             gap: 8px;
             padding: 12px;
             border-top: 1px solid var(--border);
@@ -410,27 +615,48 @@
             flex: 1;
             resize: none;
             font: inherit;
-            padding: 8px 10px;
+            padding: 10px 12px;
             color: var(--text);
             background: var(--surface);
             border: 1px solid var(--border);
-            border-radius: 10px;
+            border-radius: 14px;
+            outline: none;
+            transition: border-color 0.15s, box-shadow 0.15s;
         }
 
-        .composer button {
-            padding: 0 16px;
+        .composer textarea:focus {
+            border-color: var(--primary);
+            box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.2);
+        }
+
+        .send {
+            flex: none;
+            width: 44px;
+            height: 44px;
             border: none;
-            border-radius: 10px;
-            background: var(--primary);
+            border-radius: 50%;
+            background: linear-gradient(135deg, var(--primary), var(--accent));
             color: #ffffff;
-            font: inherit;
-            font-weight: 600;
             cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: transform 0.15s, opacity 0.15s;
         }
 
-        .composer button:disabled {
-            opacity: 0.6;
+        .send:hover {
+            transform: scale(1.06);
+        }
+
+        .send svg {
+            width: 20px;
+            height: 20px;
+        }
+
+        .send:disabled {
+            opacity: 0.5;
             cursor: wait;
+            transform: none;
         }
 
         .disclaimer {
@@ -469,6 +695,22 @@
                 max-height: 100%;
                 border-radius: 0;
             }
+
+            .teaser {
+                right: 96px;
+                max-width: calc(100vw - 120px);
+            }
+        }
+
+        /* Si l'utilisateur a demandé à son système de réduire les
+           animations, on les désactive toutes (accessibilité). */
+        @media (prefers-reduced-motion: reduce) {
+            *,
+            *::before,
+            *::after {
+                animation: none !important;
+                transition: none !important;
+            }
         }
     `;
 
@@ -476,17 +718,26 @@
     // Ce HTML est fixe (aucune donnée saisie par l'utilisateur) : on peut
     // l'insérer avec innerHTML sans risque.
     const TEMPLATE = `
+        <div class="teaser" role="button" tabindex="0" hidden>
+            <span class="teaser-text"></span>
+            <button class="teaser-close" type="button">×</button>
+        </div>
+
         <button class="launcher" type="button" aria-label="Ouvrir l'assistant RGPD">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
                  stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                 <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
             </svg>
             <img alt="">
+            <span class="online-dot" aria-hidden="true"></span>
         </button>
 
         <section class="panel" role="dialog" aria-label="Assistant RGPD" hidden>
             <header class="header">
-                <div class="avatar" aria-hidden="true"></div>
+                <div class="avatar" aria-hidden="true">
+                    <span class="initial"></span>
+                    <span class="online-dot"></span>
+                </div>
                 <div class="identity">
                     <h2 class="title"></h2>
                     <p class="role"></p>
@@ -495,15 +746,21 @@
                     <option value="fr">FR</option>
                     <option value="en">EN</option>
                 </select>
-                <button class="reset" type="button">↺</button>
-                <button class="close" type="button" aria-label="Fermer">×</button>
+                <button class="icon-button reset" type="button">↺</button>
+                <button class="icon-button close" type="button" aria-label="Fermer">×</button>
             </header>
 
             <div class="messages" aria-live="polite"></div>
 
             <form class="composer">
                 <textarea rows="2" maxlength="1000" aria-label="Votre question"></textarea>
-                <button type="submit"></button>
+                <button class="send" type="submit">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                         stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                        <path d="M22 2 11 13"/>
+                        <path d="M22 2 15 22l-4-9-9-4z"/>
+                    </svg>
+                </button>
             </form>
             <p class="disclaimer"></p>
             <p class="credit" hidden>
@@ -538,7 +795,14 @@
     let resetButton;
     let languageSelect;
     let disclaimer;
+    let teaser;
+    let headerAvatar;
     let isWaiting = false;
+
+    // Délais (en millisecondes) d'apparition et de disparition de la
+    // bulle d'invitation à côté du bouton.
+    const TEASER_DELAY = 3000;
+    const TEASER_DURATION = 15000;
 
     // ----- Création du widget dans la page -----
 
@@ -564,11 +828,13 @@
         languageSelect = shadow.querySelector(".language");
         resetButton = shadow.querySelector(".reset");
         disclaimer = shadow.querySelector(".disclaimer");
+        teaser = shadow.querySelector(".teaser");
+        headerAvatar = shadow.querySelector(".avatar");
 
         // Nom, titre et initiale de l'assistant dans l'en-tête.
         shadow.querySelector(".title").textContent = title;
         shadow.querySelector(".role").textContent = role;
-        shadow.querySelector(".avatar").textContent = title.charAt(0).toUpperCase();
+        shadow.querySelector(".initial").textContent = title.charAt(0).toUpperCase();
         loadAvatar(shadow);
         panel.setAttribute("aria-label", title + ", " + role);
         launcher.setAttribute("aria-label", "Discuter avec " + title);
@@ -583,6 +849,22 @@
         resetButton.addEventListener("click", resetConversation);
         form.addEventListener("submit", sendQuestion);
         languageSelect.addEventListener("change", changeLanguage);
+
+        // Bulle d'invitation : un clic ouvre la discussion, la croix la
+        // masque.
+        teaser.addEventListener("click", openPanel);
+        teaser.addEventListener("keydown", function (event) {
+            if (event.key === "Enter") {
+                openPanel();
+            }
+        });
+        shadow.querySelector(".teaser-close").addEventListener("click", function (event) {
+            // stopPropagation : le clic ne doit pas aussi ouvrir la
+            // discussion (le bouton est à l'intérieur de la bulle).
+            event.stopPropagation();
+            hideTeaser();
+        });
+        scheduleTeaser();
 
         input.addEventListener("keydown", function (event) {
             // Entrée envoie la question ; Maj+Entrée fait un retour à la
@@ -613,9 +895,9 @@
             const headerImage = document.createElement("img");
             headerImage.src = avatarUrl;
             headerImage.alt = "";
-            const avatar = shadow.querySelector(".avatar");
-            avatar.textContent = "";
-            avatar.appendChild(headerImage);
+            // L'image remplace l'initiale (le point vert « en ligne »
+            // reste en place).
+            shadow.querySelector(".initial").replaceWith(headerImage);
 
             // Crédit obligatoire, seulement pour l'image fournie par défaut.
             if (!scriptTag.dataset.avatar) {
@@ -642,6 +924,10 @@
 
     function openPanel() {
         panel.hidden = false;
+        // « seen » : le halo s'arrête, la discussion a été découverte.
+        // « is-open » : le bouton arrête de flotter.
+        launcher.classList.add("seen", "is-open");
+        hideTeaser();
         launcher.setAttribute("aria-label", "Fermer la discussion avec " + title);
         input.focus();
         // La zone des messages n'a de hauteur qu'une fois affichée : on
@@ -652,9 +938,28 @@
 
     function closePanel() {
         panel.hidden = true;
+        launcher.classList.remove("is-open");
         launcher.setAttribute("aria-label", "Discuter avec " + title);
         launcher.focus();
         saveConversation();
+    }
+
+    // ----- Bulle d'invitation -----
+
+    function scheduleTeaser() {
+        // La bulle apparaît après quelques secondes, seulement si le
+        // visiteur n'a pas encore ouvert la discussion, puis disparaît
+        // d'elle-même pour ne pas gêner la lecture de la page.
+        setTimeout(function () {
+            if (panel.hidden && !launcher.classList.contains("seen")) {
+                teaser.hidden = false;
+                setTimeout(hideTeaser, TEASER_DURATION);
+            }
+        }, TEASER_DELAY);
+    }
+
+    function hideTeaser() {
+        teaser.hidden = true;
     }
 
     // ----- Langue -----
@@ -662,13 +967,19 @@
     function changeLanguage() {
         currentLanguage = languageSelect.value;
         updateTexts();
+        renderSuggestions();
         saveConversation();
     }
 
     function updateTexts() {
         const texts = TEXTS[currentLanguage];
         input.placeholder = texts.placeholder;
-        sendButton.textContent = texts.send;
+        // Le bouton d'envoi est une icône : son nom est donné aux
+        // lecteurs d'écran et en info-bulle.
+        sendButton.setAttribute("aria-label", texts.send);
+        sendButton.title = texts.send;
+        teaser.querySelector(".teaser-text").textContent = texts.teaser;
+        teaser.querySelector(".teaser-close").setAttribute("aria-label", texts.closeTeaser);
         disclaimer.textContent = texts.disclaimer;
         resetButton.title = texts.newConversation;
         resetButton.setAttribute("aria-label", texts.newConversation);
@@ -687,6 +998,9 @@
             conversation: conversation,
             language: currentLanguage,
             isOpen: !panel.hidden,
+            // Discussion déjà ouverte une fois : plus de halo ni de bulle
+            // d'invitation sur les pages suivantes.
+            seen: launcher.classList.contains("seen"),
         };
         try {
             sessionStorage.setItem(STORAGE_KEY, JSON.stringify(data));
@@ -731,9 +1045,14 @@
             addUserMessage(exchange.question);
             addBotAnswer(exchange);
         }
+        renderSuggestions();
 
+        if (data !== null && data.seen) {
+            launcher.classList.add("seen");
+        }
         if (data !== null && data.isOpen) {
             panel.hidden = false;
+            launcher.classList.add("seen", "is-open");
             scrollToBottom();
         }
     }
@@ -742,6 +1061,7 @@
         conversation = [];
         messages.innerHTML = "";
         addBotMessage(welcomeText(), false);
+        renderSuggestions();
         saveConversation();
         input.focus();
     }
@@ -830,6 +1150,36 @@
         scrollToBottom();
     }
 
+    function renderSuggestions() {
+        // Questions proposées sous l'accueil, tant que la conversation
+        // n'a pas commencé. Un clic pose la question directement.
+        removeSuggestions();
+        if (conversation.length > 0) {
+            return;
+        }
+
+        const box = document.createElement("div");
+        box.className = "suggestions";
+        for (const suggestion of TEXTS[currentLanguage].suggestions) {
+            const button = document.createElement("button");
+            button.type = "button";
+            button.textContent = suggestion;
+            button.addEventListener("click", function () {
+                askQuestion(suggestion);
+            });
+            box.appendChild(button);
+        }
+        messages.appendChild(box);
+        scrollToBottom();
+    }
+
+    function removeSuggestions() {
+        const box = messages.querySelector(".suggestions");
+        if (box !== null) {
+            box.remove();
+        }
+    }
+
     function addDetails(bubble, text) {
         const details = document.createElement("div");
         details.className = "details";
@@ -881,6 +1231,7 @@
             return;
         }
 
+        removeSuggestions();
         addUserMessage(question);
         input.value = "";
         setWaiting(true);
@@ -1011,10 +1362,38 @@
         }
     }
 
+    function askQuestion(question) {
+        // Ouvre la discussion et pose la question, comme si le visiteur
+        // l'avait tapée (utilisé par les suggestions et par la page).
+        if (isWaiting) {
+            return;
+        }
+        if (panel.hidden) {
+            openPanel();
+        }
+        input.value = question;
+        form.requestSubmit();
+    }
+
     function setWaiting(waiting) {
         isWaiting = waiting;
         sendButton.disabled = waiting;
+        // L'avatar de l'en-tête s'anime pendant que l'assistant réfléchit.
+        headerAvatar.classList.toggle("thinking", waiting);
     }
+
+    // ----- Commandes utilisables par la page qui intègre le widget -----
+    // Exemple : un bouton « Discuter avec Martial » sur le site peut
+    // appeler window.RgpdChatWidget.open(), et une question d'exemple
+    // window.RgpdChatWidget.ask("Ma question").
+    window.RgpdChatWidget = {
+        open: function () {
+            openPanel();
+        },
+        ask: function (question) {
+            askQuestion(question);
+        },
+    };
 
     // ----- Démarrage -----
     // Si la page n'a pas fini de se charger, on attend qu'elle soit prête
