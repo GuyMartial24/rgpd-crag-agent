@@ -186,7 +186,7 @@ code {
 .hero {
     position: relative;
     overflow: hidden;
-    padding: 72px 0 88px;
+    padding: 40px 0 44px;
     /* Halos colorés très légers en arrière-plan. */
     background:
         radial-gradient(circle at 15% 20%, rgba(79, 70, 229, 0.12), transparent 40%),
@@ -197,14 +197,14 @@ code {
     display: grid;
     grid-template-columns: 1.1fr 1fr;
     align-items: center;
-    gap: 56px;
+    gap: 40px;
 }
 
 .eyebrow {
     display: inline-flex;
     align-items: center;
     gap: 8px;
-    margin: 0 0 18px;
+    margin: 0 0 14px;
     padding: 6px 14px;
     font-size: 0.85rem;
     font-weight: 600;
@@ -230,7 +230,7 @@ code {
 }
 
 .hero h1 {
-    margin: 0 0 18px;
+    margin: 0 0 14px;
     font-size: clamp(2.1rem, 4.5vw, 3.4rem);
     letter-spacing: -0.02em;
 }
@@ -243,7 +243,7 @@ code {
 }
 
 .lead {
-    margin: 0 0 28px;
+    margin: 0 0 22px;
     font-size: 1.15rem;
     color: var(--text-light);
     max-width: 34em;
@@ -259,7 +259,7 @@ code {
     display: flex;
     flex-wrap: wrap;
     gap: 8px 20px;
-    margin: 28px 0 0;
+    margin: 20px 0 0;
     padding: 0;
     list-style: none;
     font-size: 0.9rem;
@@ -426,7 +426,7 @@ code {
 
 /* ----- Sections ----- */
 .section {
-    padding: 80px 0;
+    padding: 40px 0;
 }
 
 .section-alt {
@@ -436,13 +436,13 @@ code {
 }
 
 .section-title {
-    margin: 0 0 10px;
+    margin: 0 0 6px;
     font-size: clamp(1.6rem, 3vw, 2.2rem);
     letter-spacing: -0.01em;
 }
 
 .section-lead {
-    margin: 0 0 32px;
+    margin: 0 0 18px;
     color: var(--text-light);
 }
 
@@ -450,15 +450,17 @@ code {
 .examples {
     display: grid;
     grid-template-columns: repeat(2, 1fr);
-    gap: 16px;
+    gap: 12px;
 }
 
 .example {
     display: flex;
     flex-direction: column;
     align-items: flex-start;
-    gap: 10px;
-    padding: 20px 22px;
+    gap: 8px;
+    position: relative;
+    /* Place à droite pour la flèche. */
+    padding: 14px 52px 14px 18px;
     font: inherit;
     font-weight: 500;
     text-align: left;
@@ -476,18 +478,24 @@ code {
     border-color: var(--primary);
 }
 
-/* Flèche qui apparaît au survol. */
+/* Flèche à droite de la carte, plus visible au survol. Elle est placée
+   en position absolue : elle ne prend pas de place dans la carte. */
 .example::after {
-    content: "Demander à Martial →";
-    font-size: 0.85rem;
+    content: "→";
+    position: absolute;
+    top: 50%;
+    right: 22px;
+    font-size: 1.3rem;
     font-weight: 600;
     color: var(--primary);
-    opacity: 0;
-    transition: opacity 0.15s;
+    opacity: 0.35;
+    transform: translateY(-50%);
+    transition: opacity 0.15s, right 0.15s;
 }
 
 .example:hover::after {
     opacity: 1;
+    right: 18px;
 }
 
 .example-tag {
@@ -505,12 +513,12 @@ code {
 .features {
     display: grid;
     grid-template-columns: repeat(4, 1fr);
-    gap: 20px;
-    margin-top: 32px;
+    gap: 14px;
+    margin-top: 18px;
 }
 
 .feature {
-    padding: 24px;
+    padding: 20px;
     background: var(--surface);
     border: 1px solid var(--border);
     border-radius: var(--radius);
@@ -518,7 +526,7 @@ code {
 }
 
 .feature h3 {
-    margin: 16px 0 8px;
+    margin: 12px 0 6px;
     font-size: 1.1rem;
 }
 
@@ -529,8 +537,8 @@ code {
 }
 
 .feature-icon {
-    width: 46px;
-    height: 46px;
+    width: 40px;
+    height: 40px;
     display: flex;
     align-items: center;
     justify-content: center;
@@ -552,23 +560,22 @@ code {
 .steps {
     display: grid;
     grid-template-columns: repeat(4, 1fr);
-    gap: 20px;
-    margin: 32px 0 0;
+    gap: 14px;
+    margin: 18px 0 0;
     padding: 0;
     list-style: none;
-    counter-reset: none;
 }
 
 .steps li {
     position: relative;
-    padding: 24px;
+    padding: 20px;
     background: var(--surface);
     border: 1px solid var(--border);
     border-radius: var(--radius);
 }
 
 .steps h3 {
-    margin: 14px 0 6px;
+    margin: 10px 0 4px;
     font-size: 1.05rem;
 }
 
@@ -596,7 +603,7 @@ code {
     flex-wrap: wrap;
     justify-content: center;
     gap: 10px;
-    margin: 36px 0 0;
+    margin: 20px 0 0;
     padding: 0;
     list-style: none;
 }
@@ -616,7 +623,7 @@ code {
     display: grid;
     grid-template-columns: 1fr 1.1fr;
     align-items: center;
-    gap: 48px;
+    gap: 32px;
 }
 
 .checklist {
@@ -702,7 +709,7 @@ code {
 
 /* ----- Pied de page ----- */
 .footer {
-    padding: 32px 0 120px;
+    padding: 24px 0 96px;
     font-size: 0.85rem;
     color: var(--text-light);
 }
@@ -726,9 +733,16 @@ code {
         grid-template-columns: 1fr;
     }
 
+    /* Une seule colonne : l'écart de la grille suffit entre le texte
+       et l'aperçu (pas de marge en plus). */
+    .hero-grid {
+        gap: 48px;
+    }
+
     .hero-visual {
+        width: 100%;
         max-width: 480px;
-        margin: 40px auto 0;
+        margin: 0 auto;
     }
 
     .features,
@@ -743,7 +757,7 @@ code {
     }
 
     .hero {
-        padding: 48px 0 64px;
+        padding: 32px 0 36px;
     }
 
     .examples,
@@ -760,7 +774,7 @@ code {
     }
 
     .section {
-        padding: 56px 0;
+        padding: 32px 0;
     }
 }
 
